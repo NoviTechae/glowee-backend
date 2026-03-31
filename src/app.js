@@ -25,26 +25,29 @@ if (process.env.NODE_ENV === "production") {
 }
 
 // 3. Enhanced security headers with helmet
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:", "http:"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"],
+      },
     },
-  },
-  hsts: {
-    maxAge: 31536000, // 1 year
-    includeSubDomains: true,
-    preload: true
-  }
-}));
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
+  })
+);
 
 // 4. CORS - SECURE: Only allow specific origins
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
