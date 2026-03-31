@@ -1,0 +1,51 @@
+{
+  "name": "glowee-api",
+  "version": "0.2.0",
+  "private": true,
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "migrate": "knex migrate:latest",
+    "migrate:make": "knex migrate:make",
+    "migrate:status": "knex migrate:status",
+    "rollback": "knex migrate:rollback",
+    "seed:admin": "node src/scripts/seedAdmin.js"
+  },
+  "keywords": [
+    "glowee",
+    "beauty",
+    "booking",
+    "api"
+  ],
+  "author": "Glowee Team",
+  "license": "ISC",
+  "description": "Glowee Beauty Services Booking Platform API",
+  "dependencies": {
+    "axios": "^1.13.6",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dayjs": "^1.11.19",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "knex": "^3.1.0",
+    "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
+    "pg": "^8.18.0",
+    "resend": "^6.9.3",
+    "stripe": "^20.3.1",
+    "twilio": "^5.13.1",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

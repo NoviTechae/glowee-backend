@@ -1,0 +1,17 @@
+# Environment variables (CRITICAL!)
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+# Uploads
+public/uploads/*
+!public/uploads/.gitkeep
