@@ -37,6 +37,9 @@ router.get("/branches", async (req, res, next) => {
         "s.cover_url",
         "s.phone",
         "s.instagram",
+        "s.is_featured",
+        "s.discount_percent",
+        "s.double_stamps",
 
         // ✅ ساعات اليوم
         "bh.is_closed as today_is_closed",
