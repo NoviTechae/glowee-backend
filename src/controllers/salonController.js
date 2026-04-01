@@ -82,6 +82,9 @@ exports.getSalons = async (req, res, next) => {
         "s.logo_url",
         "s.cover_url",
         "s.about",
+        "s.is_featured",
+        "s.discount_percent",
+        "s.double_stamps",
         // ✅ home نخليه 1 حتى UI يكون منطقي
         knex.raw(`CASE WHEN s.salon_type = 'home' THEN 1 ELSE COUNT(b.id) END as branches_count`)
       );
@@ -89,6 +92,15 @@ exports.getSalons = async (req, res, next) => {
     if (type === "home") salonsQ = salonsQ.andWhere("s.salon_type", "home");
     else if (type === "in_salon") salonsQ = salonsQ.andWhere("s.salon_type", "in_salon");
     else if (type === "both") salonsQ = salonsQ.andWhere("s.salon_type", "both");
+
+    // فلاتر اختيارية
+    const featured = req.query.featured?.toString();
+    const doubleStamps = req.query.double_stamps?.toString();
+    const hasDiscount = req.query.has_discount?.toString();
+
+    if (featured === "true") salonsQ = salonsQ.andWhere("s.is_featured", true);
+    if (doubleStamps === "true") salonsQ = salonsQ.andWhere("s.double_stamps", true);
+    if (hasDiscount === "true") salonsQ = salonsQ.andWhereNotNull("s.discount_percent").andWhere("s.discount_percent", ">", 0);
 
     if (city) {
       salonsQ = salonsQ.andWhere(function () {

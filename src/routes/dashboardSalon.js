@@ -53,6 +53,9 @@ const UpdateSalonSchema = z.object({
   email: z.string().email().nullable().optional(),
   instagram: z.string().nullable().optional(),
   website: z.string().nullable().optional(),
+  is_featured: z.boolean().optional(),
+  double_stamps: z.boolean().optional(),
+  discount_percent: z.number().int().min(0).max(100).nullable().optional(),
 }).strict();
 
 const BranchCreateSchema = z.object({
@@ -345,9 +348,37 @@ router.put("/me", dashboardAuthRequired, requireSalon, async (req, res, next) =>
     const [updated] = await db("salons")
       .where({ id: salon_id })
       .update({ ...patch, updated_at: db.fn.now() })
-      .returning(["id", "name", "about", "logo_url", "cover_url", "phone", "email", "instagram", "website", "updated_at"]);
+      .returning(["id", "name", "about", "logo_url", "cover_url", "phone", "email", "instagram", "website", "is_featured", "double_stamps", "discount_percent", "updated_at"]);
 
     res.json({ salon: updated });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// PATCH /dashboard/salon/me/flags — toggle is_featured / double_stamps / discount_percent
+router.patch("/me/flags", dashboardAuthRequired, requireSalon, async (req, res, next) => {
+  try {
+    const salon_id = req.dashboard.salon_id;
+
+    const FlagsSchema = z.object({
+      is_featured: z.boolean().optional(),
+      double_stamps: z.boolean().optional(),
+      discount_percent: z.number().int().min(0).max(100).nullable().optional(),
+    }).strict();
+
+    const patch = FlagsSchema.parse(req.body);
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: "No flags provided" });
+    }
+
+    const [updated] = await db("salons")
+      .where({ id: salon_id })
+      .update({ ...patch, updated_at: db.fn.now() })
+      .returning(["id", "is_featured", "double_stamps", "discount_percent", "updated_at"]);
+
+    res.json({ ok: true, salon: updated });
   } catch (e) {
     next(e);
   }
