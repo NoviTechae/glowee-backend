@@ -42,6 +42,7 @@ router.get(
 
       // 3) staff في نفس الفرع + يشتغلون الخدمة + متاحين (no overlap)
       const rows = await db("staff as st")
+        .join("branch_staff as bs", "bs.staff_id", "st.id")
         .join("staff_services as ss", "ss.staff_id", "st.id")
         .leftJoin("booking_item_assignments as bia", function () {
           this.on("bia.staff_id", "st.id")
@@ -50,13 +51,13 @@ router.get(
             .andOn("bia.ends_at", ">", db.raw("?", [start.toISOString()]));
         })
         .where("st.salon_id", salonId)
-        .andWhere("st.branch_id", branchId) // ✅ مصدر الحقيقة
+        .andWhere("bs.branch_id", branchId)
+        .andWhere("bs.is_active", true)
         .andWhere("st.is_active", true)
         .andWhere("ss.service_id", sa.service_id)
         .whereNull("bia.id")
         .select(["st.id", "st.name"])
         .orderBy("st.created_at", "desc");
-
       return res.json({
         data: rows,
         meta: {

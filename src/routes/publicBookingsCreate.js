@@ -154,14 +154,14 @@ router.post("/salons/:salonId/branches/:branchId/bookings", async (req, res, nex
 
     if (chosenStaffId) {
       // ✅ لازم تكون في نفس الفرع من staff.branch_id
-      const stRow = await trx("staff")
-        .where({
-          id: chosenStaffId,
-          salon_id: salonId,
-          branch_id: branchId,
-          is_active: true,
-        })
-        .first("id");
+      const stRow = await trx("staff as st")
+        .join("branch_staff as bs", "bs.staff_id", "st.id")
+        .where("st.id", chosenStaffId)
+        .andWhere("st.salon_id", salonId)
+        .andWhere("st.is_active", true)
+        .andWhere("bs.branch_id", branchId)
+        .andWhere("bs.is_active", true)
+        .first("st.id");
 
       if (!stRow) {
         await trx.rollback();
@@ -188,12 +188,14 @@ router.post("/salons/:salonId/branches/:branchId/bookings", async (req, res, nex
     } else {
       // ✅ Any staff: من نفس الفرع + عندها كل الخدمات + بدون overlap
       const candidates = await trx("staff as st")
+        .join("branch_staff as bs", "bs.staff_id", "st.id")
         .join("staff_services as ss", "ss.staff_id", "st.id")
         .where("st.salon_id", salonId)
-        .andWhere("st.branch_id", branchId)
         .andWhere("st.is_active", true)
+        .andWhere("bs.branch_id", branchId)
+        .andWhere("bs.is_active", true)
         .whereIn("ss.service_id", serviceIds)
-        .groupBy("st.id")
+        .groupBy("st.id", "st.name", "st.created_at")
         .havingRaw("COUNT(DISTINCT ss.service_id) = ?", [serviceIds.length])
         .select(["st.id", "st.name"])
         .orderBy("st.created_at", "desc");

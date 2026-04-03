@@ -112,16 +112,18 @@ const AvailabilityUpsertSchema = z.object({
 // =====================================================
 
 const StaffCreateSchema = z.object({
-  branch_id: z.string().uuid(),              // ✅ required (DB requires it)
+  branch_id: z.string().uuid(),
   name: z.string().min(2),
   phone: z.string().nullable().optional(),
-  role: z.string().nullable().optional(),
-  bio: z.string().nullable().optional(),
-  photo_url: z.string().url().nullable().optional(),
   is_active: z.coerce.boolean().optional().default(true),
 }).strict();
 
-const StaffUpdateSchema = StaffCreateSchema.partial();
+const StaffUpdateSchema = z.object({
+  branch_id: z.string().uuid().optional(),
+  name: z.string().min(2).optional(),
+  phone: z.string().nullable().optional(),
+  is_active: z.coerce.boolean().optional(),
+}).strict();
 
 const StaffServicesUpsertSchema = z.object({
   service_ids: z.array(z.string().uuid()).default([]),
@@ -133,13 +135,16 @@ router.get("/staff", dashboardAuthRequired, requireSalon, async (req, res, next)
     const salon_id = req.dashboard.salon_id;
 
     const rows = await db("staff as st")
-      .join("branches as b", "b.id", "st.branch_id")
+      .leftJoin("branch_staff as bs", function () {
+        this.on("bs.staff_id", "st.id").andOn("bs.is_active", "=", db.raw("true"));
+      })
+      .leftJoin("branches as b", "b.id", "bs.branch_id")
       .where("st.salon_id", salon_id)
       .select([
         "st.id",
         "st.name",
         "st.phone",
-        "st.branch_id",
+        "bs.branch_id",
         "b.name as branch_name",
         "st.is_active",
         "st.created_at",
@@ -182,21 +187,35 @@ router.post("/staff", dashboardAuthRequired, requireSalon, async (req, res, next
     const branch = await db("branches").where({ id: body.branch_id, salon_id }).first("id");
     if (!branch) return res.status(404).json({ error: "Branch not found" });
 
-    const [row] = await db("staff")
-      .insert({
-        salon_id,
-        branch_id: body.branch_id,
-        name: body.name,
-        phone: body.phone ?? null,
-        role: body.role ?? null,
-        bio: body.bio ?? null,
-        photo_url: body.photo_url ?? null,
-        is_active: body.is_active,
-        created_at: db.fn.now(),
-        updated_at: db.fn.now(),
-      })
-      .returning(["id", "branch_id", "name", "phone", "role", "bio", "photo_url", "is_active", "created_at", "updated_at"]);
+    const result = await db.transaction(async (trx) => {
+      const [staff] = await trx("staff")
+        .insert({
+          salon_id,
+          name: body.name,
+          phone: body.phone ?? null,
+          is_active: body.is_active,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning(["id", "name", "phone", "is_active", "created_at", "updated_at"]);
 
+      await trx("branch_staff")
+        .insert({
+          branch_id: body.branch_id,
+          staff_id: staff.id,
+          is_active: true,
+          created_at: trx.fn.now(),
+        })
+        .onConflict(["branch_id", "staff_id"])
+        .ignore();
+
+      return {
+        ...staff,
+        branch_id: body.branch_id,
+      };
+    });
+
+    res.json({ staff: result });
     res.json({ staff: row });
   } catch (e) {
     next(e);
@@ -210,14 +229,17 @@ router.get("/staff/:staffId", dashboardAuthRequired, requireSalon, async (req, r
     const { staffId } = req.params;
 
     const staff = await db("staff as st")
-      .join("branches as b", "b.id", "st.branch_id")
+      .leftJoin("branch_staff as bs", function () {
+        this.on("bs.staff_id", "st.id").andOn("bs.is_active", "=", db.raw("true"));
+      })
+      .leftJoin("branches as b", "b.id", "bs.branch_id")
       .where("st.id", staffId)
       .andWhere("st.salon_id", salon_id)
       .select([
         "st.id",
         "st.name",
         "st.phone",
-        "st.branch_id",
+        "bs.branch_id",
         "b.name as branch_name",
         "st.is_active",
       ])
@@ -233,7 +255,7 @@ router.get("/staff/:staffId", dashboardAuthRequired, requireSalon, async (req, r
       .where("ss.staff_id", staffId)
       .select(["s.id as service_id", "s.name as service_name"]);
 
-    res.json({ 
+    res.json({
       staff: {
         ...staff,
         services: services || []
@@ -256,10 +278,40 @@ router.put("/staff/:staffId", dashboardAuthRequired, requireSalon, async (req, r
       if (!branch) return res.status(404).json({ error: "Branch not found" });
     }
 
-    const [row] = await db("staff")
-      .where({ id: staffId, salon_id })
-      .update({ ...patch, updated_at: db.fn.now() })
-      .returning(["id", "name", "phone", "branch_id", "is_active", "created_at"]);
+    const result = await db.transaction(async (trx) => {
+      const staffPatch = { ...patch };
+      delete staffPatch.branch_id;
+
+      const [staff] = await trx("staff")
+        .where({ id: staffId, salon_id })
+        .update({ ...staffPatch, updated_at: trx.fn.now() })
+        .returning(["id", "name", "phone", "is_active", "created_at", "updated_at"]);
+
+      if (!staff) return null;
+
+      if (patch.branch_id) {
+        await trx("branch_staff").where({ staff_id: staffId }).del();
+
+        await trx("branch_staff").insert({
+          branch_id: patch.branch_id,
+          staff_id: staffId,
+          is_active: true,
+          created_at: trx.fn.now(),
+        });
+      }
+
+      const link = await trx("branch_staff")
+        .where({ staff_id: staffId })
+        .first("branch_id");
+
+      return {
+        ...staff,
+        branch_id: link?.branch_id ?? null,
+      };
+    });
+
+    if (!result) return res.status(404).json({ error: "Staff not found" });
+    res.json({ staff: result });
 
     if (!row) return res.status(404).json({ error: "Staff not found" });
     res.json({ staff: row });
