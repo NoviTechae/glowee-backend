@@ -16,7 +16,7 @@ function toBool(v) {
 }
 
 // Postgres: 0 Sunday ... 6 Saturday
-const dowRaw = knex.raw("EXTRACT(DOW FROM NOW())::int");
+const dowRaw = knex.raw("EXTRACT(DOW FROM timezone('Asia/Dubai', now()))::int");
 
 // Computed open_now from today's branch_hours
 function openNowSql() {
@@ -26,9 +26,11 @@ function openNowSql() {
       WHEN bh.is_closed = true THEN false
       WHEN bh.open_time IS NULL OR bh.close_time IS NULL THEN NULL
       WHEN (bh.close_time::time < bh.open_time::time) THEN
-        (NOW()::time >= bh.open_time::time OR NOW()::time < bh.close_time::time)
+        (timezone('Asia/Dubai', now())::time >= bh.open_time::time 
+         OR timezone('Asia/Dubai', now())::time < bh.close_time::time)
       ELSE
-        (NOW()::time >= bh.open_time::time AND NOW()::time < bh.close_time::time)
+        (timezone('Asia/Dubai', now())::time >= bh.open_time::time 
+         AND timezone('Asia/Dubai', now())::time < bh.close_time::time)
     END as open_now
   `);
 }
