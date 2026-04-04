@@ -241,22 +241,26 @@ router.post("/salons/:salonId/branches/:branchId/bookings", async (req, res, nex
       const qty = Number(itemsById.get(r.availability_id) || 1);
 
       const unit = Number(r.price_aed || 0);
-      const lineTotal = unit * qty; // ✅ required by DB
+      const lineTotal = unit * qty;
+      const duration = Number(r.duration_mins || 0);
 
       const [bi] = await trx("booking_items")
         .insert({
           booking_id: booking.id,
+          service_id: r.service_id, // ✅ REQUIRED
           service_availability_id: r.availability_id,
-          service_name: r.service_name,
-          duration_mins: Number(r.duration_mins),
-          unit_price_aed: unit,
+          service_name_snapshot: r.service_name, // ✅ correct column
+          price_aed_snapshot: unit, // ✅ correct column
+          duration_min_snapshot: duration, // ✅ correct column
+          duration_mins: duration, // ✅ since your table also has this column
           qty,
-          line_total_aed: lineTotal, // ✅ ADD THIS
+          line_total_aed: lineTotal,
+          created_at: trx.fn.now(),
         })
         .returning("*");
 
       await trx("booking_item_assignments").insert({
-        booking_id: booking.id,          // ✅ بما إنك أضفتيه للجدول
+        booking_id: booking.id,
         booking_item_id: bi.id,
         branch_id: branchId,
         staff_id: chosenStaffId,
