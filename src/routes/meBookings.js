@@ -1,8 +1,7 @@
-// src/routes/meBookings.tsx
 const router = require("express").Router();
 const db = require("../db/knex");
 
-// مؤقت: نفس userId اللي تستخدمينه في إنشاء الحجز
+// مؤقت
 const TEMP_USER_ID = 1;
 
 // ✅ كل حجوزاتي
@@ -24,67 +23,6 @@ router.get("/me/bookings", async (req, res, next) => {
       .orderBy("b.scheduled_at", "desc");
 
     return res.json({ data: rows });
-  } catch (e) {
-    next(e);
-  }
-});
-
-// ✅ Recent completed bookings for Home (with items for reorder)
-router.get("/me/bookings-recent", async (req, res, next) => {
-  try {
-    const limit = Math.min(Number(req.query.limit || 8), 20);
-
-    const bookings = await db("bookings as b")
-      .leftJoin("salons as s", "s.id", "b.salon_id")
-      .leftJoin("branches as br", "br.id", "b.branch_id")
-      .where("b.user_id", TEMP_USER_ID)
-      .whereIn("b.status", ["completed", "done"])
-      .select([
-        "b.id",
-        "b.status",
-        "b.mode",
-        "b.scheduled_at",
-        "b.total_aed",
-        "b.salon_id",
-        "b.branch_id",
-        "s.name as salon_name",
-        "s.logo_url as salon_logo",
-        "br.area as branch_area",
-        "br.city as branch_city",
-      ])
-      .orderBy("b.scheduled_at", "desc")
-      .limit(limit);
-
-    const ids = bookings.map((x) => x.id);
-
-    let items = [];
-    if (ids.length) {
-      items = await db("booking_items")
-        .whereIn("booking_id", ids)
-        .select([
-          "booking_id",
-          "service_availability_id",
-          "service_name_snapshot",
-          "qty",
-          "price_aed_snapshot",
-          "duration_mins",
-        ]);
-    }
-
-    const data = bookings.map((b) => ({
-      ...b,
-      items: items
-        .filter((it) => String(it.booking_id) === String(b.id))
-        .map((it) => ({
-          service_availability_id: it.service_availability_id,
-          service_name: it.service_name_snapshot,
-          qty: Number(it.qty || 1),
-          unit_price_aed: Number(it.price_aed_snapshot || 0),
-          duration_mins: Number(it.duration_mins || 0),
-        })),
-    }));
-
-    return res.json({ data });
   } catch (e) {
     next(e);
   }
@@ -119,7 +57,7 @@ router.get("/me/bookings/:bookingId", async (req, res, next) => {
       return res.status(404).json({ error: "Booking not found" });
     }
 
-    const items = await db("booking_items")
+    const itemsRaw = await db("booking_items")
       .where({ booking_id: bookingId })
       .select([
         "id",
@@ -130,6 +68,16 @@ router.get("/me/bookings/:bookingId", async (req, res, next) => {
         "line_total_aed",
         "duration_mins",
       ]);
+
+    const items = itemsRaw.map((it) => ({
+      id: it.id,
+      service_availability_id: it.service_availability_id,
+      service_name: it.service_name_snapshot,
+      qty: Number(it.qty || 1),
+      unit_price_aed: Number(it.price_aed_snapshot || 0),
+      line_total_aed: Number(it.line_total_aed || 0),
+      duration_mins: Number(it.duration_mins || 0),
+    }));
 
     const staffRow = await db("booking_item_assignments as bia")
       .join("staff as st", "st.id", "bia.staff_id")
@@ -147,15 +95,7 @@ router.get("/me/bookings/:bookingId", async (req, res, next) => {
         ...booking,
         staff_name: staffRow?.staff_name ?? null,
         ends_at: endRow?.ends_at ?? null,
-        items: items.map((it) => ({
-          id: it.id,
-          service_availability_id: it.service_availability_id,
-          service_name: it.service_name_snapshot,
-          qty: Number(it.qty || 1),
-          unit_price_aed: Number(it.price_aed_snapshot || 0),
-          line_total_aed: Number(it.line_total_aed || 0),
-          duration_mins: Number(it.duration_mins || 0),
-        })),
+        items,
       },
     });
   } catch (e) {
@@ -172,7 +112,13 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
 
     const booking = await trx("bookings")
       .where({ id: bookingId, user_id: TEMP_USER_ID })
-      .first(["id", "status", "fees_aed"]);
+      .first([
+        "id",
+        "status",
+        "subtotal_aed",
+        "fees_aed",
+        "total_aed",
+      ]);
 
     if (!booking) {
       await trx.rollback();
@@ -186,15 +132,18 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
 
     const item = await trx("booking_items")
       .where({ id: itemId, booking_id: bookingId })
-      .first(["id"]);
+      .first([
+        "id",
+        "line_total_aed",
+      ]);
 
     if (!item) {
       await trx.rollback();
-      return res.status(404).json({ error: "Item not found" });
+      return res.status(404).json({ error: "Booking item not found" });
     }
 
     await trx("booking_item_assignments")
-      .where({ booking_item_id: itemId })
+      .where({ booking_item_id: itemId, booking_id: bookingId })
       .delete();
 
     await trx("booking_items")
@@ -205,11 +154,13 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
       .where({ booking_id: bookingId })
       .select(["line_total_aed"]);
 
-    if (remainingItems.length === 0) {
+    if (!remainingItems.length) {
       await trx("bookings")
-        .where({ id: bookingId })
+        .where({ id: bookingId, user_id: TEMP_USER_ID })
         .update({
           status: "cancelled",
+          subtotal_aed: 0,
+          total_aed: 0,
           updated_at: trx.fn.now(),
         });
 
@@ -217,7 +168,7 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
       return res.json({
         ok: true,
         booking_deleted: true,
-        message: "Booking cancelled because all items were removed",
+        message: "All items removed. Booking cancelled.",
       });
     }
 
@@ -230,23 +181,29 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
     const newTotal = newSubtotal + fees;
 
     await trx("bookings")
-      .where({ id: bookingId })
+      .where({ id: bookingId, user_id: TEMP_USER_ID })
       .update({
         subtotal_aed: newSubtotal,
         total_aed: newTotal,
         updated_at: trx.fn.now(),
       });
 
+    const updatedBooking = await trx("bookings")
+      .where({ id: bookingId, user_id: TEMP_USER_ID })
+      .first([
+        "id",
+        "subtotal_aed",
+        "fees_aed",
+        "total_aed",
+        "status",
+      ]);
+
     await trx.commit();
 
     return res.json({
       ok: true,
       booking_deleted: false,
-      totals: {
-        subtotal_aed: newSubtotal,
-        fees_aed: fees,
-        total_aed: newTotal,
-      },
+      booking: updatedBooking,
     });
   } catch (e) {
     try {
@@ -265,9 +222,7 @@ router.post("/me/bookings/:bookingId/cancel", async (req, res, next) => {
       .where({ id: bookingId, user_id: TEMP_USER_ID })
       .first(["id", "status"]);
 
-    if (!row) {
-      return res.status(404).json({ error: "Booking not found" });
-    }
+    if (!row) return res.status(404).json({ error: "Booking not found" });
 
     if (row.status === "completed") {
       return res.status(400).json({ error: "Completed booking cannot be cancelled" });
@@ -287,193 +242,6 @@ router.post("/me/bookings/:bookingId/cancel", async (req, res, next) => {
 
     return res.json({ ok: true, booking: updated });
   } catch (e) {
-    next(e);
-  }
-});
-
-// ✅ تغيير وقت الحجز (Reschedule)
-router.post("/me/bookings/:bookingId/reschedule", async (req, res, next) => {
-  const trx = await db.transaction();
-
-  try {
-    const { bookingId } = req.params;
-    const { start_iso, staff_id } = req.body || {};
-
-    if (!start_iso) {
-      return res.status(400).json({ error: "Missing start_iso" });
-    }
-
-    const start = new Date(String(start_iso));
-    if (Number.isNaN(start.getTime())) {
-      return res.status(400).json({ error: "Invalid start_iso" });
-    }
-
-    const booking = await trx("bookings")
-      .where({ id: bookingId, user_id: TEMP_USER_ID })
-      .first(["id", "status", "mode", "salon_id", "branch_id"]);
-
-    if (!booking) {
-      await trx.rollback();
-      return res.status(404).json({ error: "Booking not found" });
-    }
-
-    if (booking.status === "cancelled") {
-      await trx.rollback();
-      return res.status(400).json({ error: "Cancelled booking cannot be rescheduled" });
-    }
-
-    if (booking.status === "completed") {
-      await trx.rollback();
-      return res.status(400).json({ error: "Completed booking cannot be rescheduled" });
-    }
-
-    const salonId = booking.salon_id;
-    const branchId = booking.branch_id;
-
-    const items = await trx("booking_items")
-      .where({ booking_id: bookingId })
-      .select(["service_availability_id", "qty", "duration_mins"]);
-
-    if (!items.length) {
-      await trx.rollback();
-      return res.status(400).json({ error: "Booking has no items" });
-    }
-
-    const totalDuration = items.reduce(
-      (sum, it) => sum + Number(it.duration_mins || 0) * Number(it.qty || 1),
-      0
-    );
-
-    const end = new Date(start.getTime() + totalDuration * 60 * 1000);
-
-    const dow = start.getDay();
-    const hourRow = await trx("branch_hours")
-      .where({ branch_id: branchId, day_of_week: dow })
-      .first();
-
-    if (!hourRow || hourRow.is_closed) {
-      await trx.rollback();
-      return res.status(400).json({ error: "Branch is closed on that day" });
-    }
-
-    function parseHHMMToMinutes(t) {
-      if (!t) return null;
-      const [h, m] = String(t).split(":").map(Number);
-      if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
-      return h * 60 + m;
-    }
-
-    function withinWorkingHours(open_time, close_time, startDate, endDate) {
-      const openM = parseHHMMToMinutes(open_time);
-      const closeM = parseHHMMToMinutes(close_time);
-      if (openM == null || closeM == null) return false;
-
-      const sM = startDate.getHours() * 60 + startDate.getMinutes();
-      const eM = endDate.getHours() * 60 + endDate.getMinutes();
-
-      if (closeM < openM) {
-        const startOk = sM >= openM || sM <= closeM;
-        const endOk = eM >= openM || eM <= closeM;
-        return startOk && endOk;
-      }
-
-      return sM >= openM && eM <= closeM;
-    }
-
-    if (!withinWorkingHours(hourRow.open_time, hourRow.close_time, start, end)) {
-      await trx.rollback();
-      return res.status(400).json({ error: "Selected time is outside working hours" });
-    }
-
-    const ACTIVE_STATUSES = ["pending", "confirmed"];
-
-    async function staffIsFree(staffId) {
-      const overlap = await trx("booking_item_assignments as bia")
-        .join("booking_items as bi", "bi.id", "bia.booking_item_id")
-        .join("bookings as b", "b.id", "bi.booking_id")
-        .where("bia.staff_id", staffId)
-        .andWhere("bia.branch_id", branchId)
-        .whereIn("b.status", ACTIVE_STATUSES)
-        .andWhere("b.id", "<>", bookingId)
-        .andWhere("bia.starts_at", "<", start.toISOString() ? end.toISOString() : end.toISOString())
-        .andWhere("bia.ends_at", ">", start.toISOString())
-        .first("bia.id");
-
-      return !overlap;
-    }
-
-    let chosenStaffId = staff_id ?? null;
-
-    if (!chosenStaffId) {
-      const current = await trx("booking_item_assignments")
-        .where({ booking_id: bookingId })
-        .first(["staff_id"]);
-      if (current?.staff_id) chosenStaffId = current.staff_id;
-    }
-
-    if (chosenStaffId) {
-      const ok = await trx("staff")
-        .where({ id: chosenStaffId, salon_id: salonId, branch_id: branchId, is_active: true })
-        .first("id");
-
-      if (!ok) {
-        chosenStaffId = null;
-      } else {
-        const free = await staffIsFree(chosenStaffId);
-        if (!free) chosenStaffId = null;
-      }
-    }
-
-    if (!chosenStaffId) {
-      const candidates = await trx("staff")
-        .where({ salon_id: salonId, branch_id: branchId, is_active: true })
-        .select(["id"])
-        .orderBy("created_at", "desc");
-
-      let found = null;
-      for (const c of candidates) {
-        if (await staffIsFree(c.id)) {
-          found = c.id;
-          break;
-        }
-      }
-
-      if (!found) {
-        await trx.rollback();
-        return res.status(400).json({ error: "No staff available for that time" });
-      }
-
-      chosenStaffId = found;
-    }
-
-    await trx("bookings")
-      .where({ id: bookingId, user_id: TEMP_USER_ID })
-      .update({
-        scheduled_at: start.toISOString(),
-        updated_at: trx.fn.now(),
-      });
-
-    await trx("booking_item_assignments")
-      .where({ booking_id: bookingId })
-      .update({
-        staff_id: chosenStaffId,
-        starts_at: start.toISOString(),
-        ends_at: end.toISOString(),
-      });
-
-    await trx.commit();
-
-    return res.json({
-      ok: true,
-      booking_id: bookingId,
-      staff_id: chosenStaffId,
-      scheduled_at: start.toISOString(),
-      ends_at: end.toISOString(),
-    });
-  } catch (e) {
-    try {
-      await trx.rollback();
-    } catch {}
     next(e);
   }
 });
