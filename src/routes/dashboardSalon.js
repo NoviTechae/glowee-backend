@@ -856,6 +856,10 @@ router.post(
   serviceUpload.single("file"),
   async (req, res, next) => {
     try {
+      console.log("UPLOAD HIT");
+      console.log("serviceId:", req.params.serviceId);
+      console.log("file:", req.file);
+
       const salon_id = req.dashboard.salon_id;
       const { serviceId } = req.params;
 
@@ -895,6 +899,7 @@ router.post(
         service: updated,
       });
     } catch (e) {
+      console.error("UPLOAD ERROR:", e);
       next(e);
     }
   }
