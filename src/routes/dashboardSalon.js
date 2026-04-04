@@ -838,9 +838,14 @@ router.post("/services", dashboardAuthRequired, requireSalon, async (req, res, n
       .returning("*");
 
     res.json({ service: row });
-  } catch (e) {
-    next(e);
+} catch (e) {
+  if (e.code === "23505") {
+    return res.status(400).json({
+      error: "Service with this name already exists",
+    });
   }
+  next(e);
+}
 });
 
 // POST /dashboard/salon/services/:serviceId/image
