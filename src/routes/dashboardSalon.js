@@ -239,7 +239,6 @@ router.post("/staff", dashboardAuthRequired, requireSalon, async (req, res, next
     });
 
     res.json({ staff: result });
-    res.json({ staff: row });
   } catch (e) {
     next(e);
   }
@@ -336,8 +335,6 @@ router.put("/staff/:staffId", dashboardAuthRequired, requireSalon, async (req, r
     if (!result) return res.status(404).json({ error: "Staff not found" });
     res.json({ staff: result });
 
-    if (!row) return res.status(404).json({ error: "Staff not found" });
-    res.json({ staff: row });
   } catch (e) {
     next(e);
   }
