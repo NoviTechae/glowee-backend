@@ -10,6 +10,9 @@ const multer = require("multer");
 const uploadDir = path.join(process.cwd(), "public", "uploads", "salons");
 fs.mkdirSync(uploadDir, { recursive: true });
 
+const serviceUploadDir = path.join(process.cwd(), "public", "uploads", "services");
+fs.mkdirSync(serviceUploadDir, { recursive: true });
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -28,9 +31,29 @@ const upload = multer({
     cb(ok ? null : new Error("Only JPG/PNG/WEBP allowed"), ok);
   },
 });
+
+const serviceStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, serviceUploadDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "").toLowerCase() || ".jpg";
+    const name = `service_${Date.now()}_${Math.random().toString(16).slice(2)}${ext}`;
+    cb(null, name);
+  },
+});
+
+const serviceUpload = multer({
+  storage: serviceStorage,
+  limits: { fileSize: 6 * 1024 * 1024 }, // 6MB
+  fileFilter: (req, file, cb) => {
+    const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
+    cb(ok ? null : new Error("Only JPG/PNG/WEBP allowed"), ok);
+  },
+});
+
 // ---------------------------
 // Guards
 // ---------------------------
+
 function requireSalon(req, res, next) {
   if (req.dashboard?.role !== "salon") return res.status(403).json({ error: "Salon only" });
   if (!req.dashboard?.salon_id) return res.status(401).json({ error: "Missing salon_id" });
@@ -822,6 +845,58 @@ router.post("/services", dashboardAuthRequired, requireSalon, async (req, res, n
     next(e);
   }
 });
+
+// POST /dashboard/salon/services/:serviceId/image
+router.post(
+  "/services/:serviceId/image",
+  dashboardAuthRequired,
+  requireSalon,
+  serviceUpload.single("file"),
+  async (req, res, next) => {
+    try {
+      const salon_id = req.dashboard.salon_id;
+      const { serviceId } = req.params;
+
+      const service = await db("services")
+        .where({ id: serviceId, salon_id })
+        .first("id", "image_url");
+
+      if (!service) {
+        return res.status(404).json({ error: "Service not found" });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: "Missing file" });
+      }
+
+      const image_url = `/uploads/services/${req.file.filename}`;
+
+      const [updated] = await db("services")
+        .where({ id: serviceId, salon_id })
+        .update({
+          image_url,
+          updated_at: db.fn.now(),
+        })
+        .returning([
+          "id",
+          "name",
+          "description",
+          "image_url",
+          "category_id",
+          "is_active",
+          "updated_at",
+        ]);
+
+      return res.json({
+        ok: true,
+        image_url,
+        service: updated,
+      });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 // GET /dashboard/salon/services/:serviceId
 router.get(
