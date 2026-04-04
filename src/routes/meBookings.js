@@ -57,27 +57,33 @@ router.get("/me/bookings/:bookingId", async (req, res, next) => {
       return res.status(404).json({ error: "Booking not found" });
     }
 
-    const itemsRaw = await db("booking_items")
-      .where({ booking_id: bookingId })
-      .select([
-        "id",
-        "service_availability_id",
-        "service_name_snapshot",
-        "qty",
-        "price_aed_snapshot",
-        "line_total_aed",
-        "duration_mins",
-      ]);
+const itemsRaw = await db("booking_items as bi")
+  .leftJoin("service_availability as sa", "sa.id", "bi.service_availability_id")
+  .leftJoin("services as s", "s.id", "bi.service_id")
+  .where("bi.booking_id", bookingId)
+  .select([
+    "bi.id",
+    "bi.service_id",
+    "bi.service_availability_id",
+    "bi.qty",
+    "bi.line_total_aed",
+    "bi.duration_mins",
+    "bi.service_name_snapshot",
+    "bi.price_aed_snapshot",
+    "s.image_url as service_image_url",
+  ]);
 
-    const items = itemsRaw.map((it) => ({
-      id: it.id,
-      service_availability_id: it.service_availability_id,
-      service_name: it.service_name_snapshot,
-      qty: Number(it.qty || 1),
-      unit_price_aed: Number(it.price_aed_snapshot || 0),
-      line_total_aed: Number(it.line_total_aed || 0),
-      duration_mins: Number(it.duration_mins || 0),
-    }));
+const items = itemsRaw.map((it) => ({
+  id: it.id,
+  service_id: it.service_id,
+  service_availability_id: it.service_availability_id,
+  service_name: it.service_name_snapshot,
+  unit_price_aed: Number(it.price_aed_snapshot || 0),
+  qty: Number(it.qty || 1),
+  duration_mins: Number(it.duration_mins || 0),
+  line_total_aed: Number(it.line_total_aed || 0),
+  image_url: it.service_image_url || null,
+}));
 
     const staffRow = await db("booking_item_assignments as bia")
       .join("staff as st", "st.id", "bia.staff_id")
@@ -103,22 +109,21 @@ router.get("/me/bookings/:bookingId", async (req, res, next) => {
   }
 });
 
-// ✅ حذف عنصر من الحجز قبل الدفع
-router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) => {
+router.patch("/me/bookings/:bookingId/items/:itemId", async (req, res, next) => {
   const trx = await db.transaction();
 
   try {
     const { bookingId, itemId } = req.params;
+    const qty = Number(req.body?.qty);
+
+    if (!Number.isInteger(qty) || qty < 0 || qty > 20) {
+      await trx.rollback();
+      return res.status(400).json({ error: "Invalid qty" });
+    }
 
     const booking = await trx("bookings")
       .where({ id: bookingId, user_id: TEMP_USER_ID })
-      .first([
-        "id",
-        "status",
-        "subtotal_aed",
-        "fees_aed",
-        "total_aed",
-      ]);
+      .first(["id", "status", "fees_aed"]);
 
     if (!booking) {
       await trx.rollback();
@@ -134,7 +139,10 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
       .where({ id: itemId, booking_id: bookingId })
       .first([
         "id",
-        "line_total_aed",
+        "qty",
+        "price_aed_snapshot",
+        "duration_min_snapshot",
+        "duration_mins",
       ]);
 
     if (!item) {
@@ -142,17 +150,31 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
       return res.status(404).json({ error: "Booking item not found" });
     }
 
-    await trx("booking_item_assignments")
-      .where({ booking_item_id: itemId, booking_id: bookingId })
-      .delete();
+    if (qty === 0) {
+      await trx("booking_item_assignments")
+        .where({ booking_item_id: itemId, booking_id: bookingId })
+        .delete();
 
-    await trx("booking_items")
-      .where({ id: itemId, booking_id: bookingId })
-      .delete();
+      await trx("booking_items")
+        .where({ id: itemId, booking_id: bookingId })
+        .delete();
+    } else {
+      const unitPrice = Number(item.price_aed_snapshot || 0);
+      const duration = Number(item.duration_min_snapshot || item.duration_mins || 0);
+      const lineTotal = unitPrice * qty;
+
+      await trx("booking_items")
+        .where({ id: itemId, booking_id: bookingId })
+        .update({
+          qty,
+          duration_mins: duration,
+          line_total_aed: lineTotal,
+        });
+    }
 
     const remainingItems = await trx("booking_items")
       .where({ booking_id: bookingId })
-      .select(["line_total_aed"]);
+      .select(["line_total_aed", "qty", "duration_mins"]);
 
     if (!remainingItems.length) {
       await trx("bookings")
@@ -168,12 +190,16 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
       return res.json({
         ok: true,
         booking_deleted: true,
-        message: "All items removed. Booking cancelled.",
       });
     }
 
     const newSubtotal = remainingItems.reduce(
       (sum, it) => sum + Number(it.line_total_aed || 0),
+      0
+    );
+
+    const newDuration = remainingItems.reduce(
+      (sum, it) => sum + Number(it.qty || 0) * Number(it.duration_mins || 0),
       0
     );
 
@@ -188,27 +214,19 @@ router.delete("/me/bookings/:bookingId/items/:itemId", async (req, res, next) =>
         updated_at: trx.fn.now(),
       });
 
-    const updatedBooking = await trx("bookings")
-      .where({ id: bookingId, user_id: TEMP_USER_ID })
-      .first([
-        "id",
-        "subtotal_aed",
-        "fees_aed",
-        "total_aed",
-        "status",
-      ]);
-
     await trx.commit();
 
     return res.json({
       ok: true,
       booking_deleted: false,
-      booking: updatedBooking,
+      totals: {
+        subtotal_aed: newSubtotal,
+        total_aed: newTotal,
+        duration_mins: newDuration,
+      },
     });
   } catch (e) {
-    try {
-      await trx.rollback();
-    } catch {}
+    try { await trx.rollback(); } catch {}
     next(e);
   }
 });
