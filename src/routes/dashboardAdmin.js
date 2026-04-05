@@ -70,7 +70,7 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
       const [s] = await trx("salons")
         .insert({
           name: salon.name,
-          salon_type: salon.salon_type ?? "in_salon",   // ✅ NEW
+          salon_type: salon.salon_type ?? "in_salon",
           about: salon.about ?? null,
           logo_url: salon.logo_url ?? null,
           cover_url: salon.cover_url ?? null,
@@ -83,6 +83,7 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
           updated_at: trx.fn.now(),
         })
         .returning(["id", "name", "salon_type", "is_active"]);
+
       const password_hash = await bcrypt.hash(account.password, 10);
 
       const [acc] = await trx("dashboard_accounts")
@@ -96,6 +97,37 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
           updated_at: trx.fn.now(),
         })
         .returning(["id", "email", "role", "salon_id", "is_active"]);
+
+      // ✅ auto-create internal branch for home salons
+      if (s.salon_type === "home") {
+        const [branch] = await trx("branches")
+          .insert({
+            salon_id: s.id,
+            name: "Home Service",
+            country: "United Arab Emirates",
+            city: "UAE",
+            area: "Home Service",
+            address_line: null,
+            lat: 0,
+            lng: 0,
+            geo: null,
+            supports_home_services: true,
+            is_active: true,
+            created_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
+          })
+          .returning(["id", "name", "salon_id"]);
+
+        await trx("branch_hours").insert([
+          { branch_id: branch.id, day_of_week: 0, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
+          { branch_id: branch.id, day_of_week: 1, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
+          { branch_id: branch.id, day_of_week: 2, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
+          { branch_id: branch.id, day_of_week: 3, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
+          { branch_id: branch.id, day_of_week: 4, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
+          { branch_id: branch.id, day_of_week: 5, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
+          { branch_id: branch.id, day_of_week: 6, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
+        ]);
+      }
 
       return { salon: s, account: acc };
     });
@@ -247,9 +279,18 @@ router.post("/salons/:salonId/branches", dashboardAuthRequired, requireAdmin, as
     const s = await db("salons").where({ id: salonId }).first("id", "salon_type");
     if (!s) return res.status(404).json({ error: "Salon not found" });
 
-    if (s.salon_type === "home") {
-      return res.status(400).json({ error: "Home salons cannot have branches" });
-    }
+if (s.salon_type === "home") {
+  const existingCount = await db("branches")
+    .where({ salon_id: salonId })
+    .count("* as c")
+    .first();
+
+  if (Number(existingCount?.c || 0) >= 1) {
+    return res.status(400).json({
+      error: "Home salons can only have one internal home-service branch",
+    });
+  }
+}
     const [b] = await db("branches")
       .insert({
         salon_id: salonId,

@@ -533,23 +533,45 @@ router.get("/branches", dashboardAuthRequired, requireSalon, async (req, res, ne
   }
 });
 
+
 // POST /dashboard/salon/branches
 router.post("/branches", dashboardAuthRequired, requireSalon, async (req, res, next) => {
   try {
     const salon_id = req.dashboard.salon_id;
+
+    // ✅ هذا المكان الصحيح
+    const salon = await db("salons")
+      .where({ id: salon_id })
+      .first("id", "salon_type");
+
+    if (!salon) {
+      return res.status(404).json({ error: "Salon not found" });
+    }
+
+    if (salon.salon_type === "home") {
+      const existingCount = await db("branches")
+        .where({ salon_id })
+        .count("* as c")
+        .first();
+
+      if (Number(existingCount?.c || 0) >= 1) {
+        return res.status(400).json({
+          error: "Home service salons can only have one internal branch",
+        });
+      }
+    }
+
+    // 👇 بعدها يكمل الكود الطبيعي
     const body = BranchCreateSchema.parse(req.body);
 
     const [b] = await db("branches")
       .insert({
         salon_id,
         name: body.name,
-
-        // ✅ NEW: branch contact
         phone: body.phone ?? null,
         email: body.email ?? null,
         whatsapp: body.whatsapp ?? null,
         instagram: body.instagram ?? null,
-
         country: body.country,
         city: body.city,
         area: body.area,
@@ -557,7 +579,6 @@ router.post("/branches", dashboardAuthRequired, requireSalon, async (req, res, n
         lat: body.lat,
         lng: body.lng,
         geo: geoRaw(body.lng, body.lat),
-
         supports_home_services: body.supports_home_services,
         is_active: body.is_active,
         created_at: db.fn.now(),
@@ -566,6 +587,7 @@ router.post("/branches", dashboardAuthRequired, requireSalon, async (req, res, n
       .returning("*");
 
     res.json({ branch: b });
+
   } catch (e) {
     next(e);
   }
