@@ -110,7 +110,7 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
             address_line: null,
             lat: 0,
             lng: 0,
-            geo: null,
+            geo: geoRaw(0, 0),
             supports_home_services: true,
             is_active: true,
             created_at: trx.fn.now(),
@@ -279,18 +279,18 @@ router.post("/salons/:salonId/branches", dashboardAuthRequired, requireAdmin, as
     const s = await db("salons").where({ id: salonId }).first("id", "salon_type");
     if (!s) return res.status(404).json({ error: "Salon not found" });
 
-if (s.salon_type === "home") {
-  const existingCount = await db("branches")
-    .where({ salon_id: salonId })
-    .count("* as c")
-    .first();
+    if (s.salon_type === "home") {
+      const existingCount = await db("branches")
+        .where({ salon_id: salonId })
+        .count("* as c")
+        .first();
 
-  if (Number(existingCount?.c || 0) >= 1) {
-    return res.status(400).json({
-      error: "Home salons can only have one internal home-service branch",
-    });
-  }
-}
+      if (Number(existingCount?.c || 0) >= 1) {
+        return res.status(400).json({
+          error: "Home salons can only have one internal home-service branch",
+        });
+      }
+    }
     const [b] = await db("branches")
       .insert({
         salon_id: salonId,
@@ -482,16 +482,16 @@ router.get("/gift-themes", dashboardAuthRequired, requireAdmin, async (req, res,
 router.get("/gift-themes/:id", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
-    
+
     const theme = await db("gift_themes")
       .select("id", "title", "category", "front_image_url", "back_image_url", "is_active", "sort_order", "created_at")
       .where({ id })
       .first();
-    
+
     if (!theme) {
       return res.status(404).json({ ok: false, error: "Gift theme not found" });
     }
-    
+
     res.json({ ok: true, data: theme });
   } catch (error) {
     console.error("Error fetching gift theme:", error);
@@ -503,22 +503,22 @@ router.get("/gift-themes/:id", dashboardAuthRequired, requireAdmin, async (req, 
 router.post("/gift-themes", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
     const { title, category, front_image_url, back_image_url, is_active } = req.body;
-    
+
     // Validation
     if (!title || !front_image_url || !back_image_url) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "Title, front image, and back image are required" 
+      return res.status(400).json({
+        ok: false,
+        error: "Title, front image, and back image are required"
       });
     }
-    
+
     // Get max sort_order and add 1
     const maxOrder = await db("gift_themes")
       .max("sort_order as max_order")
       .first();
-    
+
     const nextOrder = (maxOrder?.max_order || 0) + 1;
-    
+
     const [created] = await db("gift_themes")
       .insert({
         title,
@@ -531,7 +531,7 @@ router.post("/gift-themes", dashboardAuthRequired, requireAdmin, async (req, res
         updated_at: db.fn.now(),
       })
       .returning(["id", "title", "category", "front_image_url", "back_image_url", "is_active", "sort_order", "created_at"]);
-    
+
     res.status(201).json({ ok: true, data: created });
   } catch (error) {
     console.error("Error creating gift theme:", error);
@@ -544,31 +544,31 @@ router.patch("/gift-themes/:id", dashboardAuthRequired, requireAdmin, async (req
   try {
     const { id } = req.params;
     const { title, category, front_image_url, back_image_url, is_active } = req.body;
-    
+
     // Build update object
     const updates = {};
-    
+
     if (title !== undefined) updates.title = title;
     if (category !== undefined) updates.category = category;
     if (front_image_url !== undefined) updates.front_image_url = front_image_url;
     if (back_image_url !== undefined) updates.back_image_url = back_image_url;
     if (is_active !== undefined) updates.is_active = is_active;
-    
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ ok: false, error: "No fields to update" });
     }
-    
+
     updates.updated_at = db.fn.now();
-    
+
     const [updated] = await db("gift_themes")
       .where({ id })
       .update(updates)
       .returning(["id", "title", "category", "front_image_url", "back_image_url", "is_active", "sort_order", "created_at"]);
-    
+
     if (!updated) {
       return res.status(404).json({ ok: false, error: "Gift theme not found" });
     }
-    
+
     res.json({ ok: true, data: updated });
   } catch (error) {
     console.error("Error updating gift theme:", error);
@@ -580,15 +580,15 @@ router.patch("/gift-themes/:id", dashboardAuthRequired, requireAdmin, async (req
 router.delete("/gift-themes/:id", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
     const { id } = req.params;
-    
+
     const deleted = await db("gift_themes")
       .where({ id })
       .del();
-    
+
     if (deleted === 0) {
       return res.status(404).json({ ok: false, error: "Gift theme not found" });
     }
-    
+
     res.json({ ok: true, message: "Gift theme deleted successfully" });
   } catch (error) {
     console.error("Error deleting gift theme:", error);
@@ -602,7 +602,7 @@ router.post("/gift-themes/upload", upload.single("file"), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ ok: false, error: "No file uploaded" });
     }
-    
+
     const url = `/uploads/gift-themes/${req.file.filename}`;
     res.json({ ok: true, url });
   } catch (error) {
@@ -615,11 +615,11 @@ router.post("/gift-themes/upload", upload.single("file"), (req, res) => {
 router.post("/gift-themes/reorder", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
     const { ids } = req.body;
-    
+
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ ok: false, error: "Invalid IDs array" });
     }
-    
+
     // Update sort_order for each theme
     await db.transaction(async (trx) => {
       for (let i = 0; i < ids.length; i++) {
@@ -628,7 +628,7 @@ router.post("/gift-themes/reorder", dashboardAuthRequired, requireAdmin, async (
           .update({ sort_order: i + 1 });
       }
     });
-    
+
     res.json({ ok: true, message: "Themes reordered successfully" });
   } catch (error) {
     console.error("Error reordering gift themes:", error);
@@ -667,7 +667,7 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
       const [{ active_users }] = await db("users")
         .where({ is_active: true })
         .count("* as active_users");
-      
+
       userStats = {
         total: Number(total_users),
         active: Number(active_users),
@@ -680,15 +680,15 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
     let bookingStats = null;
     try {
       const [{ total_bookings }] = await db("bookings").count("* as total_bookings");
-      
+
       const [{ today_bookings }] = await db("bookings")
         .whereRaw("DATE(created_at) = CURRENT_DATE")
         .count("* as today_bookings");
-      
+
       const [{ month_bookings }] = await db("bookings")
         .whereRaw("DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)")
         .count("* as month_bookings");
-      
+
       bookingStats = {
         total: Number(total_bookings),
         today: Number(today_bookings),
@@ -830,8 +830,8 @@ router.post("/bookings/:id/cancel", dashboardAuthRequired, requireAdmin, async (
     }
 
     if (booking.status === "cancelled" || booking.status === "completed") {
-      return res.status(400).json({ 
-        error: `Cannot cancel ${booking.status} booking` 
+      return res.status(400).json({
+        error: `Cannot cancel ${booking.status} booking`
       });
     }
 
@@ -842,9 +842,9 @@ router.post("/bookings/:id/cancel", dashboardAuthRequired, requireAdmin, async (
         updated_at: db.fn.now(),
       });
 
-    res.json({ 
-      ok: true, 
-      message: "Booking cancelled successfully" 
+    res.json({
+      ok: true,
+      message: "Booking cancelled successfully"
     });
   } catch (e) {
     next(e);
@@ -1036,9 +1036,9 @@ router.get("/bookings/:id", dashboardAuthRequired, requireAdmin, async (req, res
 
     const booking = await db("bookings as b")
       .where("b.id", id)
-      .leftJoin("users as u",      "u.id",  "b.user_id")
-      .leftJoin("salons as s",     "s.id",  "b.salon_id")
-      .leftJoin("branches as br",  "br.id", "b.branch_id")
+      .leftJoin("users as u", "u.id", "b.user_id")
+      .leftJoin("salons as s", "s.id", "b.salon_id")
+      .leftJoin("branches as br", "br.id", "b.branch_id")
       .select([
         "b.id",
         "b.user_id",
@@ -1080,15 +1080,15 @@ router.get("/bookings/:id", dashboardAuthRequired, requireAdmin, async (req, res
     res.json({
       booking: {
         ...booking,
-        total_aed:    Number(booking.total_aed    || 0),
+        total_aed: Number(booking.total_aed || 0),
         subtotal_aed: Number(booking.subtotal_aed || 0),
-        fees_aed:     Number(booking.fees_aed     || 0),
+        fees_aed: Number(booking.fees_aed || 0),
       },
       items: items.map((it) => ({
         ...it,
-        qty:           Number(it.qty           || 1),
+        qty: Number(it.qty || 1),
         unit_price_aed: Number(it.unit_price_aed || 0),
-        duration_mins:  Number(it.duration_mins  || 0),
+        duration_mins: Number(it.duration_mins || 0),
       })),
     });
   } catch (e) {
@@ -1102,8 +1102,8 @@ router.get("/feedback", dashboardAuthRequired, requireAdmin, async (req, res, ne
     const { rating, salon_id, limit = 100 } = req.query;
 
     let query = db("booking_ratings as r")
-      .leftJoin("users as u",     "u.id",  "r.user_id")
-      .leftJoin("salons as s",    "s.id",  "r.salon_id")
+      .leftJoin("users as u", "u.id", "r.user_id")
+      .leftJoin("salons as s", "s.id", "r.salon_id")
       .leftJoin("branches as br", "br.id", "r.branch_id")
       .select([
         "r.id",
