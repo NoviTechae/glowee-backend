@@ -13,7 +13,7 @@ exports.up = async function (knex) {
     t.boolean("is_active").notNullable().defaultTo(true);
 
     // 👇 مهم جداً لو تبين تضغط البانر
-    t.string("action_type").nullable(); 
+    t.string("action_type").nullable() ; 
     // "salon" | "offer" | "url" | "category"
 
     t.string("action_value").nullable(); 
