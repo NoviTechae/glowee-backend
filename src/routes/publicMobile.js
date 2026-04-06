@@ -3,7 +3,7 @@ const router = require("express").Router();
 const db = require("../db/knex");
 
 // GET /mobile/banners?placement=home
-router.get("/mobile/banners", async (req, res, next) => {
+router.get("/banners", async (req, res, next) => {
   try {
     const placement = String(req.query.placement || "home");
     const now = new Date();
