@@ -160,6 +160,8 @@ app.use('/payments', require("./routes/payments"));
 // Glowee partners
 app.use("/glowee", require("./routes/gloweePartner"));
 
+app.use("/mobile", require("./routes/publicMobile"));
+
 // Dashboard
 app.use("/dashboard/auth", require("./routes/dashboardAuth"));
 app.use("/dashboard", require("./routes/dashboard"));

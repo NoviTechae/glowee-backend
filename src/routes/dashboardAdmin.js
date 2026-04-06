@@ -1142,6 +1142,45 @@ router.get("/feedback", dashboardAuthRequired, requireAdmin, async (req, res, ne
   }
 });
 
+router.get("/mobile-banners", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
+  try {
+    const rows = await db("mobile_banners")
+      .select("*")
+      .orderBy("placement", "asc")
+      .orderBy("sort_order", "asc");
+
+    res.json({ data: rows });
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post("/mobile-banners", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
+  try {
+    const { title, image_url, placement, is_active } = req.body;
+
+    const [{ max_order }] = await db("mobile_banners")
+      .where({ placement: placement || "home" })
+      .max("sort_order as max_order");
+
+    const [created] = await db("mobile_banners")
+      .insert({
+        title: title || null,
+        image_url,
+        placement: placement || "home",
+        is_active: is_active !== false,
+        sort_order: Number(max_order || 0) + 1,
+        created_at: db.fn.now(),
+        updated_at: db.fn.now(),
+      })
+      .returning("*");
+
+    res.status(201).json({ banner: created });
+  } catch (e) {
+    next(e);
+  }
+});
+
 router.use("/notifications", require("./adminNotifications"));
 
 module.exports = router;
