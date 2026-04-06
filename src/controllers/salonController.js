@@ -35,26 +35,26 @@ function openNowSql() {
   `);
 }
 
-function makeHomeBranch(salon) {
-  return {
-    id: `home-${salon.id}`,
-    salon_id: salon.id,
-    name: salon.name,
-    city: null,
-    area: null,
-    address_line: null,
-    lat: null,
-    lng: null,
-    supports_home_services: true,
-    rating: null,
-    reviews_count: null,
-    today_is_closed: null,
-    today_open_time: null,
-    today_close_time: null,
-    open_now: null,
-    branch_hours: [],
-  };
-}
+// function makeHomeBranch(salon) {
+//   return {
+//     id: `home-${salon.id}`,
+//     salon_id: salon.id,
+//     name: salon.name,
+//     city: null,
+//     area: null,
+//     address_line: null,
+//     lat: null,
+//     lng: null,
+//     supports_home_services: true,
+//     rating: null,
+//     reviews_count: null,
+//     today_is_closed: null,
+//     today_open_time: null,
+//     today_close_time: null,
+//     open_now: null,
+//     branch_hours: [],
+//   };
+// }
 
 /**
  * GET /salons
@@ -119,35 +119,33 @@ exports.getSalons = async (req, res, next) => {
     }
 
     // ✅ نجيب فروع فقط للصالونات اللي مو home
-    const notHomeSalonIds = salons.filter((s) => s.salon_type !== "home").map((s) => s.id);
-
-    const branches = notHomeSalonIds.length
+    const branches = salonIds.length
       ? await knex("branches as b")
-          .join("salons as s", "s.id", "b.salon_id")
-          .leftJoin("branch_hours as bh", function () {
-            this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
-          })
-          .whereIn("b.salon_id", notHomeSalonIds)
-          .andWhere("b.is_active", true)
-          .andWhere("s.is_active", true)
-          .select([
-            "b.id",
-            "b.salon_id",
-            "b.name",
-            "b.city",
-            "b.area",
-            "b.address_line",
-            "b.lat",
-            "b.lng",
-            "b.supports_home_services",
-            "b.rating",
-            "b.reviews_count",
-            "bh.is_closed as today_is_closed",
-            "bh.open_time as today_open_time",
-            "bh.close_time as today_close_time",
-            openNowSql(),
-          ])
-          .orderBy("b.created_at", "desc")
+        .join("salons as s", "s.id", "b.salon_id")
+        .leftJoin("branch_hours as bh", function () {
+          this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
+        })
+        .whereIn("b.salon_id", salonIds)
+        .andWhere("b.is_active", true)
+        .andWhere("s.is_active", true)
+        .select([
+          "b.id",
+          "b.salon_id",
+          "b.name",
+          "b.city",
+          "b.area",
+          "b.address_line",
+          "b.lat",
+          "b.lng",
+          "b.supports_home_services",
+          "b.rating",
+          "b.reviews_count",
+          "bh.is_closed as today_is_closed",
+          "bh.open_time as today_open_time",
+          "bh.close_time as today_close_time",
+          openNowSql(),
+        ])
+        .orderBy("b.created_at", "asc")
       : [];
 
     const services = await knex("services as srv")
@@ -165,12 +163,9 @@ exports.getSalons = async (req, res, next) => {
       );
 
     const data = salons.map((salon) => {
-      const salonBranches =
-        salon.salon_type === "home"
-          ? [makeHomeBranch(salon)] // ✅ home صار له فرع افتراضي واحد
-          : branches
-              .filter((b) => b.salon_id === salon.id)
-              .map((b) => ({ ...b, branch_hours: [] }));
+      const salonBranches = branches
+        .filter((b) => b.salon_id === salon.id)
+        .map((b) => ({ ...b, branch_hours: [] }));
 
       return {
         ...salon,
@@ -202,39 +197,14 @@ exports.getSalonById = async (req, res, next) => {
   try {
     const salonId = req.params.id;
 
-    const salon = await knex("salons").where({ id: salonId, is_active: true }).first();
+    const salon = await knex("salons")
+      .where({ id: salonId, is_active: true })
+      .first();
 
-    if (!salon) return res.status(404).json({ message: "Salon not found" });
-
-    // ✅ لو home: رجع فرع افتراضي + services فقط
-    if (salon.salon_type === "home") {
-      const services = await knex("services as srv")
-        .leftJoin("service_categories as cat", "srv.category_id", "cat.id")
-        .where({ "srv.salon_id": salonId })
-        .andWhere("srv.is_active", true)
-        .select(
-          "srv.id",
-          "srv.name",
-          "srv.description",
-          "srv.image_url",
-          "cat.id as category_id",
-          "cat.name as category_name"
-        );
-
-      return res.json({
-        ...salon,
-        branches: [makeHomeBranch(salon)],
-        services: services.map((s) => ({
-          id: s.id,
-          name: s.name,
-          description: s.description,
-          image_url: s.image_url,
-          category: s.category_id ? { id: s.category_id, name: s.category_name } : null,
-        })),
-      });
+    if (!salon) {
+      return res.status(404).json({ message: "Salon not found" });
     }
 
-    // branches (with computed open_now today)
     const branches = await knex("branches as b")
       .leftJoin("branch_hours as bh", function () {
         this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
@@ -258,19 +228,18 @@ exports.getSalonById = async (req, res, next) => {
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
-      .orderBy("b.created_at", "desc");
+      .orderBy("b.created_at", "asc");
 
     const branchIds = branches.map((b) => b.id);
 
-    // full weekly hours
     const hours = branchIds.length
       ? await knex("branch_hours")
-          .whereIn("branch_id", branchIds)
-          .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
-          .orderBy([
-            { column: "branch_id", order: "asc" },
-            { column: "day_of_week", order: "asc" },
-          ])
+        .whereIn("branch_id", branchIds)
+        .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
+        .orderBy([
+          { column: "branch_id", order: "asc" },
+          { column: "day_of_week", order: "asc" },
+        ])
       : [];
 
     const hoursByBranch = new Map();
@@ -293,7 +262,7 @@ exports.getSalonById = async (req, res, next) => {
         "cat.name as category_name"
       );
 
-    res.json({
+    return res.json({
       ...salon,
       branches: branches.map((b) => ({
         ...b,
@@ -304,7 +273,9 @@ exports.getSalonById = async (req, res, next) => {
         name: s.name,
         description: s.description,
         image_url: s.image_url,
-        category: s.category_id ? { id: s.category_id, name: s.category_name } : null,
+        category: s.category_id
+          ? { id: s.category_id, name: s.category_name }
+          : null,
       })),
     });
   } catch (err) {
@@ -320,16 +291,12 @@ exports.getBranchById = async (req, res, next) => {
   try {
     const { salonId, branchId } = req.params;
 
-    const salon = await knex("salons").where({ id: salonId, is_active: true }).first();
-    if (!salon) return res.status(404).json({ message: "Salon not found" });
+    const salon = await knex("salons")
+      .where({ id: salonId, is_active: true })
+      .first();
 
-    // ✅ home branch افتراضي
-    const expectedHomeBranchId = `home-${salonId}`;
-    if (salon.salon_type === "home" && String(branchId) === expectedHomeBranchId) {
-      return res.json({
-        salon,
-        branch: makeHomeBranch(salon),
-      });
+    if (!salon) {
+      return res.status(404).json({ message: "Salon not found" });
     }
 
     const branch = await knex("branches as b")
@@ -347,14 +314,22 @@ exports.getBranchById = async (req, res, next) => {
       ])
       .first();
 
-    if (!branch) return res.status(404).json({ message: "Branch not found" });
+    if (!branch) {
+      return res.status(404).json({ message: "Branch not found" });
+    }
 
     const branch_hours = await knex("branch_hours")
       .where({ branch_id: branchId })
       .select("day_of_week", "is_closed", "open_time", "close_time")
       .orderBy("day_of_week", "asc");
 
-    res.json({ salon, branch: { ...branch, branch_hours } });
+    return res.json({
+      salon,
+      branch: {
+        ...branch,
+        branch_hours,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -368,12 +343,12 @@ exports.getBranchesBySalonId = async (req, res, next) => {
   try {
     const { salonId } = req.params;
 
-    const salon = await knex("salons").where({ id: salonId, is_active: true }).first();
-    if (!salon) return res.status(404).json({ message: "Salon not found" });
+    const salon = await knex("salons")
+      .where({ id: salonId, is_active: true })
+      .first();
 
-    // ✅ home: رجع فرع افتراضي واحد
-    if (salon.salon_type === "home") {
-      return res.json({ salonId, branches: [makeHomeBranch(salon)] });
+    if (!salon) {
+      return res.status(404).json({ message: "Salon not found" });
     }
 
     const branches = await knex("branches as b")
@@ -399,17 +374,18 @@ exports.getBranchesBySalonId = async (req, res, next) => {
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
-      .orderBy("b.created_at", "desc");
+      .orderBy("b.created_at", "asc");
 
     const branchIds = branches.map((b) => b.id);
+
     const hours = branchIds.length
       ? await knex("branch_hours")
-          .whereIn("branch_id", branchIds)
-          .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
-          .orderBy([
-            { column: "branch_id", order: "asc" },
-            { column: "day_of_week", order: "asc" },
-          ])
+        .whereIn("branch_id", branchIds)
+        .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
+        .orderBy([
+          { column: "branch_id", order: "asc" },
+          { column: "day_of_week", order: "asc" },
+        ])
       : [];
 
     const hoursByBranch = new Map();
