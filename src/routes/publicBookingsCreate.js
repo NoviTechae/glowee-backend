@@ -28,6 +28,20 @@ function parseHHMMToMinutes(t) {
   return h * 60 + m;
 }
 
+function getUaeMinutes(date) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Dubai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+
+  const hour = Number(parts.find(p => p.type === "hour").value);
+  const minute = Number(parts.find(p => p.type === "minute").value);
+
+  return hour * 60 + minute;
+}
+
 function withinWorkingHours(open_time, close_time, startDate, endDate) {
   const openM = parseHHMMToMinutes(open_time);
   const closeM = parseHHMMToMinutes(close_time);
