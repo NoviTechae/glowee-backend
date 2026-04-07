@@ -33,17 +33,15 @@ function withinWorkingHours(open_time, close_time, startDate, endDate) {
   const closeM = parseHHMMToMinutes(close_time);
   if (openM == null || closeM == null) return false;
 
-  const sM = startDate.getHours() * 60 + startDate.getMinutes();
-  const eM = endDate.getHours() * 60 + endDate.getMinutes();
+  const sM = getUaeMinutes(startDate); // ✅ FIX
+  const eM = getUaeMinutes(endDate);   // ✅ FIX
 
-  // overnight (مثلا 18:00 - 02:00)
   if (closeM < openM) {
     const startOk = sM >= openM || sM <= closeM;
     const endOk = eM >= openM || eM <= closeM;
     return startOk && endOk;
   }
 
-  // normal
   return sM >= openM && eM <= closeM;
 }
 
