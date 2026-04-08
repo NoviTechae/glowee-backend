@@ -1,3 +1,4 @@
+// src/routes/addresses.js
 const router = require("express").Router();
 const authRequired = require("../middleware/authRequired");
 const addressController = require("../controllers/addressController");

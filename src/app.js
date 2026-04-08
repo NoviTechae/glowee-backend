@@ -162,8 +162,8 @@ app.use("/glowee", require("./routes/gloweePartner"));
 
 app.use("/mobile", require("./routes/publicMobile"));
 
-const addressRoutes = require("./routes/addresses");
-app.use("/addresses", addressRoutes);
+const addressesRoutes = require("./src/routes/addresses");
+app.use("/me/addresses", addressesRoutes);
 
 // Dashboard
 app.use("/dashboard/auth", require("./routes/dashboardAuth"));
