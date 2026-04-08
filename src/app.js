@@ -163,7 +163,7 @@ app.use("/glowee", require("./routes/gloweePartner"));
 
 app.use("/mobile", require("./routes/publicMobile"));
 
-const addressesRoutes = require("./src/routes/addresses");
+const addressesRoutes = require("./routes/addresses");
 app.use("/me/addresses", addressesRoutes);
 
 // Dashboard
