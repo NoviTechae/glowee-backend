@@ -1,20 +1,17 @@
-// backend/src/controllers/giftController.js
 const knex = require("../db/knex");
 const { v4: uuidv4 } = require("uuid");
 const { spendWalletBalance } = require("./walletController");
 const { addPoints } = require("./rewardController");
 const { sendGiftNotification } = require("../services/whatsapp");
-const { notifyGiftReceived } = require("../utils/notifications"); // ✅ NEW
+const { notifyGiftReceived } = require("../utils/notifications");
 
 // helper: map DB status -> app status tabs
 function mapGiftStatus(dbStatus) {
-  // gifts.status: active | redeemed | expired | cancelled
   if (dbStatus === "redeemed") return "redeemed";
-  return "received"; // active/expired/cancelled تعتبر ضمن received في UI
+  return "received";
 }
 
 // ✅ GET /gifts/received-cards
-// كل الكروت اللي وصلتني سواء active/redeemed/expired/cancelled
 exports.getReceivedCards = async (req, res, next) => {
   try {
     const userPhone = req.user.phone;
@@ -38,18 +35,17 @@ exports.getReceivedCards = async (req, res, next) => {
       ])
       .orderBy("g.created_at", "desc");
 
-    // Get items count for each gift
-    const giftIds = rows.map(r => r.id);
+    const giftIds = rows.map((r) => r.id);
     let itemsCounts = {};
-    
+
     if (giftIds.length > 0) {
       const counts = await knex("gift_items")
         .whereIn("gift_id", giftIds)
         .groupBy("gift_id")
         .select("gift_id")
         .count("* as count");
-      
-      counts.forEach(c => {
+
+      counts.forEach((c) => {
         itemsCounts[c.gift_id] = Number(c.count);
       });
     }
@@ -58,11 +54,11 @@ exports.getReceivedCards = async (req, res, next) => {
       id: r.id,
       theme_id: r.theme_id,
       merchant_name: r.merchant_name,
-      type: r.type, // service | gift_card
+      type: r.type,
       items_count: itemsCounts[r.id] || 0,
       from_name: r.sender_name,
       message: r.message,
-      status: mapGiftStatus(r.status), // received | redeemed
+      status: mapGiftStatus(r.status),
       created_at: r.created_at,
       expires_at: r.expires_at,
       redeemed_at: r.redeemed_at,
@@ -76,8 +72,6 @@ exports.getReceivedCards = async (req, res, next) => {
 };
 
 // ✅ GET /gifts/available
-// الهدايا اللي اقدر استخدمها الحين (active + not expired)
-// "تنتهي وتختفي من available بعد 3 شهور"
 exports.getAvailableGifts = async (req, res, next) => {
   try {
     const userPhone = req.user.phone;
@@ -86,7 +80,7 @@ exports.getAvailableGifts = async (req, res, next) => {
       .leftJoin("salons as s", "s.id", "g.salon_id")
       .where("g.recipient_phone", userPhone)
       .andWhere("g.status", "active")
-      .andWhere("g.expires_at", ">", knex.fn.now()) // ✅ تختفي بعد الانتهاء
+      .andWhere("g.expires_at", ">", knex.fn.now())
       .select([
         "g.id",
         "g.theme_id",
@@ -102,18 +96,17 @@ exports.getAvailableGifts = async (req, res, next) => {
       ])
       .orderBy("g.created_at", "desc");
 
-    // Get items count
-    const giftIds = rows.map(r => r.id);
+    const giftIds = rows.map((r) => r.id);
     let itemsCounts = {};
-    
+
     if (giftIds.length > 0) {
       const counts = await knex("gift_items")
         .whereIn("gift_id", giftIds)
         .groupBy("gift_id")
         .select("gift_id")
         .count("* as count");
-      
-      counts.forEach(c => {
+
+      counts.forEach((c) => {
         itemsCounts[c.gift_id] = Number(c.count);
       });
     }
@@ -126,7 +119,7 @@ exports.getAvailableGifts = async (req, res, next) => {
       items_count: itemsCounts[r.id] || 0,
       from_name: r.sender_name,
       message: r.message,
-      status: "received", // available معناها usable
+      status: "received",
       created_at: r.created_at,
       expires_at: r.expires_at,
       amount_aed: Number(r.amount_aed),
@@ -139,15 +132,15 @@ exports.getAvailableGifts = async (req, res, next) => {
 };
 
 // ✅ GET /gifts/sent?tab=received|redeemed
-// history للهدايا اللي انا ارسلتها
 exports.getSentGifts = async (req, res, next) => {
   try {
-    const tab = String(req.query.tab || "received"); // received | redeemed
+    const userId = req.user.sub || req.user.id;
+    const tab = String(req.query.tab || "received");
     const statusFilter = tab === "redeemed" ? "redeemed" : "active";
 
     const rows = await knex("gifts as g")
       .leftJoin("salons as s", "s.id", "g.salon_id")
-      .where("g.sender_user_id", req.user.sub)
+      .where("g.sender_user_id", userId)
       .andWhere("g.status", statusFilter)
       .select([
         "g.id",
@@ -165,18 +158,17 @@ exports.getSentGifts = async (req, res, next) => {
       ])
       .orderBy("g.created_at", "desc");
 
-    // Get items count
-    const giftIds = rows.map(r => r.id);
+    const giftIds = rows.map((r) => r.id);
     let itemsCounts = {};
-    
+
     if (giftIds.length > 0) {
       const counts = await knex("gift_items")
         .whereIn("gift_id", giftIds)
         .groupBy("gift_id")
         .select("gift_id")
         .count("* as count");
-      
-      counts.forEach(c => {
+
+      counts.forEach((c) => {
         itemsCounts[c.gift_id] = Number(c.count);
       });
     }
@@ -189,7 +181,7 @@ exports.getSentGifts = async (req, res, next) => {
       items_count: itemsCounts[r.id] || 0,
       from_name: r.sender_name || "You",
       message: r.message,
-      status: mapGiftStatus(r.status), // received | redeemed
+      status: mapGiftStatus(r.status),
       created_at: r.created_at,
       expires_at: r.expires_at,
       redeemed_at: r.redeemed_at,
@@ -202,9 +194,10 @@ exports.getSentGifts = async (req, res, next) => {
   }
 };
 
-// ✅ GET /gifts/:id  (تفاصيل هدية)
+// ✅ GET /gifts/:id
 exports.getGiftById = async (req, res, next) => {
   try {
+    const userId = req.user.sub || req.user.id;
     const { id } = req.params;
 
     const row = await knex("gifts as g")
@@ -230,13 +223,13 @@ exports.getGiftById = async (req, res, next) => {
 
     if (!row) return res.status(404).json({ error: "Gift not found" });
 
-    const isSender = String(row.sender_user_id) === String(req.user.sub);
+    const isSender = String(row.sender_user_id) === String(userId);
     const isRecipient = String(row.recipient_phone) === String(req.user.phone);
+
     if (!isSender && !isRecipient) {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    // Get gift items if any
     const items = await knex("gift_items")
       .where({ gift_id: id })
       .select([
@@ -257,7 +250,7 @@ exports.getGiftById = async (req, res, next) => {
         merchant_name: row.merchant_name,
         type: row.type,
         items_count: items.length,
-        items: items.map(it => ({
+        items: items.map((it) => ({
           id: it.id,
           service_availability_id: it.service_availability_id,
           service_name: it.service_name,
@@ -284,128 +277,195 @@ exports.getGiftById = async (req, res, next) => {
 // ✅ POST /gifts/send
 exports.sendGift = async (req, res, next) => {
   const trx = await knex.transaction();
-  
+
   try {
+    const userId = req.user.sub || req.user.id;
+
     const {
       recipient_phone,
+      receivers,
       salon_id,
+      salonId,
       amount_aed,
-      service_items, // Array of { availability_id, qty, service_name, unit_price_aed, duration_mins }
+      amount,
+      service_items,
+      serviceItems,
       message,
       theme_id,
+      themeId,
       sender_name,
+      fromName,
     } = req.body;
 
-    // ✅ check wallet
-    const wallet = await trx("wallets").where({ user_id: req.user.sub }).first();
-    if (!wallet || Number(wallet.balance_aed) < Number(amount_aed)) {
+    // ✅ support both old and new frontend payloads
+    const finalAmount = Number(amount_aed ?? amount ?? 0);
+    const finalSalonId = salon_id ?? salonId ?? null;
+    const finalThemeId = theme_id ?? themeId ?? null;
+    const finalSenderName = sender_name ?? fromName ?? null;
+    const finalServiceItems = Array.isArray(service_items)
+      ? service_items
+      : Array.isArray(serviceItems)
+      ? serviceItems
+      : [];
+
+    // support single phone or receivers array
+    let finalReceivers = [];
+
+    if (Array.isArray(receivers) && receivers.length > 0) {
+      finalReceivers = receivers
+        .map((r) => ({
+          name: r?.name || null,
+          phone: r?.phone || null,
+        }))
+        .filter((r) => !!r.phone);
+    } else if (recipient_phone) {
+      finalReceivers = [{ name: null, phone: recipient_phone }];
+    }
+
+    if (!finalAmount || finalAmount <= 0) {
+      await trx.rollback();
+      return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    if (!finalReceivers.length) {
+      await trx.rollback();
+      return res.status(400).json({ error: "Recipient phone is required" });
+    }
+
+    // ✅ check wallet once
+    const wallet = await trx("wallets").where({ user_id: userId }).first();
+    if (!wallet || Number(wallet.balance_aed) < finalAmount) {
       await trx.rollback();
       return res.status(400).json({ error: "رصيدك غير كافي لإرسال هذه الهدية" });
     }
 
-    const code = uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase();
+    const createdGifts = [];
 
-    // ✅ 3 months expiry
-    const expires_at = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+    for (const receiver of finalReceivers) {
+      const code = uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase();
+      const expires_at = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
 
-    const [gift] = await trx("gifts")
-      .insert({
-        sender_user_id: req.user.sub,
-        recipient_phone,
-        salon_id: salon_id || null,
-        amount_aed,
+      const [gift] = await trx("gifts")
+        .insert({
+          sender_user_id: userId,
+          recipient_phone: receiver.phone,
+          salon_id: finalSalonId,
+          amount_aed: finalAmount,
+          code,
+          expires_at,
+          message: message || null,
+          theme_id: finalThemeId,
+          sender_name: finalSenderName,
+          status: "active",
+          created_at: trx.fn.now(),
+        })
+        .returning("*");
+
+      if (Array.isArray(finalServiceItems) && finalServiceItems.length > 0) {
+        for (const item of finalServiceItems) {
+          const qty = Number(item.qty || 1);
+          const unitPrice = Number(item.unit_price_aed || item.price_aed || 0);
+
+          await trx("gift_items").insert({
+            gift_id: gift.id,
+            service_availability_id: item.availability_id,
+            service_name: item.service_name || "Service",
+            qty,
+            unit_price_aed: unitPrice,
+            line_total_aed: unitPrice * qty,
+            duration_mins: Number(item.duration_mins || 0),
+            created_at: trx.fn.now(),
+          });
+        }
+      }
+
+      createdGifts.push({
+        ...gift,
         code,
+        recipient_phone: receiver.phone,
         expires_at,
-        message: message || null,
-        theme_id: theme_id || null,
-        sender_name: sender_name || null,
-        status: "active",
-        created_at: trx.fn.now(),
-      })
-      .returning("*");
+      });
+    }
 
-    // ✅ deduct wallet
+    // ✅ deduct wallet once from sender
     await spendWalletBalance(
-      req.user.sub,
-      amount_aed,
-      `هدية للرقم ${recipient_phone}`,
-      gift.id,
+      userId,
+      finalAmount,
+      `هدية إلى ${finalReceivers.map((r) => r.phone).join(", ")}`,
+      createdGifts[0].id,
       "gift_sent",
       trx
     );
 
-    // 🎁 Reward: Send Gift (10 points)
-    await addPoints(req.user.sub, 10, "gift_sent", gift.id, trx);
-
-    // ✅ Store service items in proper table
-    if (Array.isArray(service_items) && service_items.length > 0) {
-      for (const item of service_items) {
-        await trx("gift_items").insert({
-          gift_id: gift.id,
-          service_availability_id: item.availability_id,
-          service_name: item.service_name || "Service",
-          qty: item.qty || 1,
-          unit_price_aed: item.unit_price_aed || 0,
-          line_total_aed: (item.unit_price_aed || 0) * (item.qty || 1),
-          duration_mins: item.duration_mins || 0,
-          created_at: trx.fn.now(),
-        });
-      }
-    }
+    // 🎁 Reward
+    await addPoints(userId, 10, "gift_sent", createdGifts[0].id, trx);
 
     await trx.commit();
 
-    // ✅ 🔔 NEW: Send Push Notification to receiver
-setImmediate(async () => {
-  try {
-    // Get receiver's user ID from phone number
-    const receiver = await knex("users")
-      .where({ phone: recipient_phone })
-      .first("id");
+    // notifications async
+    for (const gift of createdGifts) {
+      setImmediate(async () => {
+        try {
+          const receiver = await knex("users")
+            .where({ phone: gift.recipient_phone })
+            .first("id");
 
-    if (receiver) {
-      await notifyGiftReceived(
-        receiver.id,
-        gift.id,
-        sender_name || "Someone special",
-        Number(amount_aed)
-      );
-      console.log(`✅ Push notification sent to ${recipient_phone}`);
-    } else {
-      console.log(`⚠️ No user found with phone ${recipient_phone}`);
+          if (receiver) {
+            await notifyGiftReceived(
+              receiver.id,
+              gift.id,
+              finalSenderName || "Someone special",
+              Number(finalAmount)
+            );
+            console.log(`✅ Push notification sent to ${gift.recipient_phone}`);
+          } else {
+            console.log(`⚠️ No user found with phone ${gift.recipient_phone}`);
+          }
+        } catch (e) {
+          console.error("Push notification failed (non-blocking):", e.message);
+        }
+      });
+
+      setImmediate(async () => {
+        try {
+          await sendGiftNotification(gift.recipient_phone, {
+            code: gift.code,
+            senderName: finalSenderName || "Someone special",
+            amount: Number(finalAmount).toFixed(2),
+            message: message,
+            themeEmoji:
+              finalThemeId === "birthday"
+                ? "🎂"
+                : finalThemeId === "wedding"
+                ? "💍"
+                : finalThemeId === "anniversary"
+                ? "💐"
+                : "🎁",
+          });
+        } catch (e) {
+          console.error("WhatsApp send failed (non-blocking):", e.message);
+        }
+      });
     }
-  } catch (e) {
-    console.error("Push notification failed (non-blocking):", e.message);
-  }
-});
 
-    // ✅ Send WhatsApp notification asynchronously (don't wait for it)
-    setImmediate(async () => {
-      try {
-        await sendGiftNotification(recipient_phone, {
-          code: code,
-          senderName: sender_name || "Someone special",
-          amount: Number(amount_aed).toFixed(2),
-          message: message,
-          themeEmoji: theme_id === 'birthday' ? '🎂' : 
-                      theme_id === 'wedding' ? '💍' : 
-                      theme_id === 'anniversary' ? '💐' : '🎁',
-        });
-      } catch (e) {
-        console.error("WhatsApp send failed (non-blocking):", e.message);
-      }
-    });
-
-    res.json({ 
-      ok: true, 
-      gift: {
+    res.json({
+      ok: true,
+      gifts: createdGifts.map((gift) => ({
         id: gift.id,
-        code: code,
-        amount_aed: Number(amount_aed),
-        recipient_phone,
-        expires_at,
-        items_count: service_items?.length || 0,
-      }
+        code: gift.code,
+        amount_aed: Number(finalAmount),
+        recipient_phone: gift.recipient_phone,
+        expires_at: gift.expires_at,
+        items_count: finalServiceItems?.length || 0,
+      })),
+      gift: {
+        id: createdGifts[0].id,
+        code: createdGifts[0].code,
+        amount_aed: Number(finalAmount),
+        recipient_phone: createdGifts[0].recipient_phone,
+        expires_at: createdGifts[0].expires_at,
+        items_count: finalServiceItems?.length || 0,
+      },
     });
   } catch (err) {
     await trx.rollback();
@@ -413,7 +473,7 @@ setImmediate(async () => {
   }
 };
 
-// ✅ POST /gifts/:id/redeem (manual redemption - not needed if auto-claim works)
+// ✅ POST /gifts/:id/redeem
 exports.redeemGift = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -423,7 +483,6 @@ exports.redeemGift = async (req, res, next) => {
       return res.status(404).json({ error: "Gift not found" });
     }
 
-    // فقط المستلم يقدر يستخدمها
     if (String(gift.recipient_phone) !== String(req.user.phone)) {
       return res.status(403).json({ error: "Not allowed" });
     }
@@ -432,18 +491,14 @@ exports.redeemGift = async (req, res, next) => {
       return res.status(400).json({ error: "Gift not usable" });
     }
 
-    // انتهت صلاحيتها؟
     if (new Date(gift.expires_at) <= new Date()) {
       return res.status(400).json({ error: "Gift expired" });
     }
 
-    // تحديث الحالة
-    await knex("gifts")
-      .where({ id })
-      .update({
-        status: "redeemed",
-        redeemed_at: knex.fn.now(),
-      });
+    await knex("gifts").where({ id }).update({
+      status: "redeemed",
+      redeemed_at: knex.fn.now(),
+    });
 
     res.json({ ok: true });
   } catch (err) {
@@ -458,29 +513,25 @@ exports.markGiftSeen = async (req, res, next) => {
     const { id } = req.params;
 
     const gift = await trx("gifts").where({ id }).first();
-    if (!gift) { 
-      await trx.rollback(); 
-      return res.status(404).json({ error: "Gift not found" }); 
+    if (!gift) {
+      await trx.rollback();
+      return res.status(404).json({ error: "Gift not found" });
     }
 
-    // فقط المستلم
     if (String(gift.recipient_phone) !== String(req.user.phone)) {
       await trx.rollback();
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    // إذا انحسبت قبل لا تعيدين
     if (gift.seen_at && gift.sender_seen_rewarded) {
       await trx.commit();
       return res.json({ ok: true, already: true });
     }
 
-    // ✅ علمنا انها seen
     await trx("gifts").where({ id }).update({
       seen_at: trx.fn.now(),
     });
 
-    // ✅ نقاط للمرسل (مرة وحدة) - 10 points when gift is opened
     const SEEN_POINTS = 10;
 
     if (!gift.sender_seen_rewarded && gift.sender_user_id) {
