@@ -62,6 +62,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
       "http://localhost:19006",       // Expo web (if used)
       "http://127.0.0.1:19006",
 
+     "http://3.122.60.25:4000",
       "capacitor://localhost",        // iOS app (if used)
       "http://localhost",             // Android app
       // Add your production domains when ready:
