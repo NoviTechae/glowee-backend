@@ -1,3 +1,4 @@
+// src/routes/adminPayments.js
 const router = require("express").Router();
 const db = require("../db/knex");
 const dashboardAuthRequired = require("../middleware/dashboardAuthRequired");

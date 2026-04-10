@@ -1382,5 +1382,6 @@ router.post(
 );
 router.use("/notifications", require("./adminNotifications"));
 router.use("/payments", require("./adminPayments"));
+router.use("/wallet", require("./adminWallet"));
 
 module.exports = router;
