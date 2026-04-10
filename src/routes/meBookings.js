@@ -36,7 +36,7 @@ router.get("/me/bookings/:bookingId", async (req, res, next) => {
       .leftJoin("salons as s", "s.id", "b.salon_id")
       .leftJoin("branches as br", "br.id", "b.branch_id")
       .where("b.id", bookingId)
-      .andWhere("b.user_id", TEMP_USER_ID)
+      .andWhere("b.user_id", req.user.sub)
       .first([
         "b.id",
         "b.status",
@@ -121,7 +121,7 @@ router.patch("/me/bookings/:bookingId/items/:itemId", async (req, res, next) => 
     }
 
     const booking = await trx("bookings")
-      .where({ id: bookingId, user_id: TEMP_USER_ID })
+      .where({ id: bookingId, user_id: req.user.sub })
       .first(["id", "status", "fees_aed"]);
 
     if (!booking) {
@@ -177,7 +177,7 @@ router.patch("/me/bookings/:bookingId/items/:itemId", async (req, res, next) => 
 
     if (!remainingItems.length) {
       await trx("bookings")
-        .where({ id: bookingId, user_id: TEMP_USER_ID })
+        .where({ id: bookingId, user_id: req.user.sub })
         .update({
           status: "cancelled",
           subtotal_aed: 0,
@@ -206,7 +206,7 @@ router.patch("/me/bookings/:bookingId/items/:itemId", async (req, res, next) => 
     const newTotal = newSubtotal + fees;
 
     await trx("bookings")
-      .where({ id: bookingId, user_id: TEMP_USER_ID })
+      .where({ id: bookingId, user_id: req.user.sub })
       .update({
         subtotal_aed: newSubtotal,
         total_aed: newTotal,
@@ -236,7 +236,7 @@ router.post("/me/bookings/:bookingId/cancel", async (req, res, next) => {
     const { bookingId } = req.params;
 
     const row = await db("bookings")
-      .where({ id: bookingId, user_id: TEMP_USER_ID })
+      .where({ id: bookingId, user_id: req.user.sub })
       .first(["id", "status"]);
 
     if (!row) return res.status(404).json({ error: "Booking not found" });
@@ -250,7 +250,7 @@ router.post("/me/bookings/:bookingId/cancel", async (req, res, next) => {
     }
 
     const [updated] = await db("bookings")
-      .where({ id: bookingId, user_id: TEMP_USER_ID })
+      .where({ id: bookingId, user_id: req.user.sub })
       .update({
         status: "cancelled",
         updated_at: db.fn.now(),
