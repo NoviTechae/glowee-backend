@@ -28,7 +28,7 @@ router.get("/me/bookings", authRequired, async (req, res, next) => {
 });
 
 // ✅ تفاصيل حجز واحد
-router.get("/me/bookings/:bookingId", async (req, res, next) => {
+router.get("/me/bookings/:bookingId", authRequired, async (req, res, next) => {
   try {
     const { bookingId } = req.params;
 
@@ -108,7 +108,7 @@ const items = itemsRaw.map((it) => ({
   }
 });
 
-router.patch("/me/bookings/:bookingId/items/:itemId", async (req, res, next) => {
+router.patch("/me/bookings/:bookingId/items/:itemId", authRequired, async (req, res, next) => {
   const trx = await db.transaction();
 
   try {
@@ -231,7 +231,7 @@ router.patch("/me/bookings/:bookingId/items/:itemId", async (req, res, next) => 
 });
 
 // ✅ إلغاء حجز
-router.post("/me/bookings/:bookingId/cancel", async (req, res, next) => {
+router.post("/me/bookings/:bookingId/cancel", authRequired, async (req, res, next) => {
   try {
     const { bookingId } = req.params;
 
