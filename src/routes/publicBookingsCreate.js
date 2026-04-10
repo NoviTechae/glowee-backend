@@ -2,6 +2,7 @@
 const router = require("express").Router();
 const { z } = require("zod");
 const db = require("../db/knex");
+const authRequired = require("../middleware/authRequired");
 
 // Body schema
 const BodySchema = z
@@ -59,8 +60,7 @@ function withinWorkingHours(open_time, close_time, startDate, endDate) {
   return sM >= openM && eM <= closeM;
 }
 
-router.post("/salons/:salonId/branches/:branchId/bookings", async (req, res, next) => {
-  const trx = await db.transaction();
+router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async (req, res, next) => {  const trx = await db.transaction();
 
   try {
     const { salonId, branchId } = req.params;
@@ -229,7 +229,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", async (req, res, nex
     const total = subtotal + fees;
 
     // 5) Create booking
-    const userId = 1; // TODO: اربطيها بالـ auth الحقيقي
+const userId = req.user.sub;
 
     const [booking] = await trx("bookings")
       .insert({

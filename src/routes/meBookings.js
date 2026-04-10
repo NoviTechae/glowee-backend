@@ -1,16 +1,15 @@
+// src/routes/meBookings.js
 const router = require("express").Router();
 const db = require("../db/knex");
-
-// مؤقت
-const TEMP_USER_ID = 1;
+const authRequired = require("../middleware/authRequired");
 
 // ✅ كل حجوزاتي
-router.get("/me/bookings", async (req, res, next) => {
-  try {
+router.get("/me/bookings", authRequired, async (req, res, next) => {
+    try {
     const rows = await db("bookings as b")
       .leftJoin("salons as s", "s.id", "b.salon_id")
       .leftJoin("branches as br", "br.id", "b.branch_id")
-      .where("b.user_id", TEMP_USER_ID)
+.where("b.user_id", req.user.sub)
       .select([
         "b.id",
         "b.status",
