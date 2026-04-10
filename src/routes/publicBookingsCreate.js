@@ -9,7 +9,7 @@ const BodySchema = z
   .object({
     mode: z.enum(["in_salon", "home"]),
     start_iso: z.string().min(10),
-    staff_id: z.string().uuid().nullable().optional(), // null => Any staff
+    staff_id: z.string().uuid().nullable().optional(),
     customer_note: z.string().max(1000).optional().nullable(),
     items: z
       .array(
@@ -19,6 +19,14 @@ const BodySchema = z
         })
       )
       .min(1),
+
+    // home service fields
+    contact_name: z.string().max(120).optional().nullable(),
+    contact_phone: z.string().max(30).optional().nullable(),
+    area: z.string().max(120).optional().nullable(),
+    address_line1: z.string().max(255).optional().nullable(),
+    address_line2: z.string().max(255).optional().nullable(),
+    location_note: z.string().max(1000).optional().nullable(),
   })
   .strict();
 
@@ -65,6 +73,28 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
   try {
     const { salonId, branchId } = req.params;
     const body = BodySchema.parse(req.body);
+
+    if (body.mode === "home") {
+  if (!body.contact_name?.trim()) {
+    await trx.rollback();
+    return res.status(400).json({ error: "contact_name is required for home bookings" });
+  }
+
+  if (!body.contact_phone?.trim()) {
+    await trx.rollback();
+    return res.status(400).json({ error: "contact_phone is required for home bookings" });
+  }
+
+  if (!body.area?.trim()) {
+    await trx.rollback();
+    return res.status(400).json({ error: "area is required for home bookings" });
+  }
+
+  if (!body.address_line1?.trim()) {
+    await trx.rollback();
+    return res.status(400).json({ error: "address_line1 is required for home bookings" });
+  }
+}
 
     const start = new Date(String(body.start_iso));
     if (Number.isNaN(start.getTime())) {
