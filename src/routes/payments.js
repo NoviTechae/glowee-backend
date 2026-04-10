@@ -271,8 +271,6 @@ router.get('/verify/:chargeId', authRequired, async (req, res, next) => {
   }
 });
 
-// In src/routes/payments.js or create new booking/gift routes
-
 const bookingPayment = require('../controllers/bookingPaymentController');
 const giftPayment = require('../controllers/giftPaymentController');
 
