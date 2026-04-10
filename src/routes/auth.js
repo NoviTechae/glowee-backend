@@ -13,6 +13,13 @@ if (!JWT_SECRET || JWT_SECRET === 'change_me') {
   throw new Error('JWT_SECRET is required and must not be "change_me"');
 }
 
+const APPLE_REVIEW_DEMO_PHONE = '+971500000000';
+const APPLE_REVIEW_DEMO_CODE = '123456';
+
+function isAppleReviewDemoPhone(phone) {
+  return phone === APPLE_REVIEW_DEMO_PHONE;
+}
+
 // ---------- Helpers ----------
 function normalizeUAEPhone(input) {
   let p = String(input || '').trim().replace(/\s+/g, '');
@@ -113,8 +120,8 @@ async function autoClaimPendingGifts(userId, userPhone, trx = db) {
       }
     }
 
-    return { 
-      claimed: pendingGifts.length, 
+    return {
+      claimed: pendingGifts.length,
       total_amount: totalAmount,
       gifts: pendingGifts.map(g => ({
         id: g.id,
@@ -185,6 +192,22 @@ router.post(
         return res.status(400).json({ error: 'Invalid UAE phone format. Use 05XXXXXXXX or +9715XXXXXXXX' });
       }
 
+      // Apple Review demo phone: skip Twilio and return normal success
+      if (isAppleReviewDemoPhone(normPhone)) {
+        await db('otp_codes').insert({
+          phone: normPhone,
+          code_hash: 'apple_review_demo',
+          expires_at: new Date(Date.now() + 30 * 60 * 1000),
+          attempts: 0,
+        });
+
+        return res.json({
+          ok: true,
+          expires_in_sec: 1800,
+          demo: true,
+        });
+      }
+
       // anti-spam: max 3 OTP requests in last 5 mins per phone
       const recent = await db('otp_codes')
         .where({ phone: normPhone })
@@ -230,93 +253,100 @@ router.post('/verify-otp', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid UAE phone format. Use 05XXXXXXXX or +9715XXXXXXXX' });
     }
 
-    const result = await checkOtp(normPhone, code);
+    // Apple Review demo login
+    if (isAppleReviewDemoPhone(normPhone)) {
+      if (code !== APPLE_REVIEW_DEMO_CODE) {
+        await trx.rollback();
+        return res.status(400).json({ error: 'Invalid or expired code' });
+      }
+    } else {
+      const result = await checkOtp(normPhone, code);
 
-    if (result.status !== 'approved') {
-      await trx.rollback();
-      return res.status(400).json({ error: 'Invalid or expired code' });
+      if (result.status !== 'approved') {
+        await trx.rollback();
+        return res.status(400).json({ error: 'Invalid or expired code' });
+      }
     }
+      // find or create user
+      let user = await trx('users').where({ phone: normPhone }).first();
+      let isNewUser = false;
 
-    // find or create user
-    let user = await trx('users').where({ phone: normPhone }).first();
-    let isNewUser = false;
+      if (!user) {
+        isNewUser = true;
 
-    if (!user) {
-      isNewUser = true;
+        // Generate unique referral code
+        let referralCode = generateReferralCode(0);
+        let attempts = 0;
+        while (attempts < 10) {
+          const existing = await trx('users').where({ referral_code: referralCode }).first();
+          if (!existing) break;
+          referralCode = generateReferralCode(attempts);
+          attempts++;
+        }
 
-      // Generate unique referral code
-      let referralCode = generateReferralCode(0);
-      let attempts = 0;
-      while (attempts < 10) {
-        const existing = await trx('users').where({ referral_code: referralCode }).first();
-        if (!existing) break;
-        referralCode = generateReferralCode(attempts);
-        attempts++;
+        const inserted = await trx('users')
+          .insert({
+            phone: normPhone,
+            created_at: trx.fn.now(),
+            last_login: trx.fn.now(),
+            phone_verified_at: trx.fn.now(),
+            is_active: true,
+            is_blocked: false,
+            referral_code: referralCode,
+          })
+          .returning(['id', 'phone', 'name', 'referral_code']);
+
+        user = inserted?.[0];
+
+        await trx('wallets').insert({
+          user_id: user.id,
+          balance_aed: 0,
+          updated_at: trx.fn.now(),
+        });
+
+        await trx('user_rewards').insert({
+          user_id: user.id,
+          points_balance: 0,
+          total_earned: 0,
+          total_spent: 0,
+          level_name: 'Bronze',
+          created_at: trx.fn.now(),
+        });
+      } else {
+        await trx('users').where({ id: user.id }).update({ last_login: trx.fn.now() });
       }
 
-      const inserted = await trx('users')
-        .insert({
-          phone: normPhone,
-          created_at: trx.fn.now(),
-          last_login: trx.fn.now(),
-          phone_verified_at: trx.fn.now(),
-          is_active: true,
-          is_blocked: false,
-          referral_code: referralCode,
-        })
-        .returning(['id', 'phone', 'name', 'referral_code']);
+      // auto-claim pending gifts
+      const giftsClaimed = await autoClaimPendingGifts(user.id, normPhone, trx);
 
-      user = inserted?.[0];
+      await trx.commit();
 
-      await trx('wallets').insert({
-        user_id: user.id,
-        balance_aed: 0,
-        updated_at: trx.fn.now(),
-      });
+      const token = issueJwt(user);
 
-      await trx('user_rewards').insert({
-        user_id: user.id,
-        points_balance: 0,
-        total_earned: 0,
-        total_spent: 0,
-        level_name: 'Bronze',
-        created_at: trx.fn.now(),
-      });
-    } else {
-      await trx('users').where({ id: user.id }).update({ last_login: trx.fn.now() });
+      const response = {
+        token,
+        user: {
+          id: user.id,
+          phone: user.phone,
+          name: user.name || null,
+          referral_code: user.referral_code || null,
+        },
+        is_new_user: isNewUser,
+      };
+
+      if (giftsClaimed.claimed > 0) {
+        response.gifts_claimed = giftsClaimed;
+      }
+
+      return res.json(response);
+    } catch (err) {
+      try {
+        await trx.rollback();
+      } catch { }
+      console.error('verify-otp error:', err);
+      next(err);
     }
-
-    // auto-claim pending gifts
-    const giftsClaimed = await autoClaimPendingGifts(user.id, normPhone, trx);
-
-    await trx.commit();
-
-    const token = issueJwt(user);
-
-    const response = {
-      token,
-      user: {
-        id: user.id,
-        phone: user.phone,
-        name: user.name || null,
-        referral_code: user.referral_code || null,
-      },
-      is_new_user: isNewUser,
-    };
-
-    if (giftsClaimed.claimed > 0) {
-      response.gifts_claimed = giftsClaimed;
-    }
-
-    return res.json(response);
-  } catch (err) {
-    try {
-      await trx.rollback();
-    } catch {}
-    console.error('verify-otp error:', err);
-    next(err);
-  }
-});
+  });
 
 // GET /auth/me
 router.get('/me', authRequired, async (req, res, next) => {
@@ -326,9 +356,9 @@ router.get('/me', authRequired, async (req, res, next) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     return res.json({
-      user: { 
-        id: user.id, 
-        phone: user.phone, 
+      user: {
+        id: user.id,
+        phone: user.phone,
         name: user.name || null,
         email: user.email || null,
         profile_image_url: user.profile_image_url || null,
