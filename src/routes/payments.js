@@ -77,6 +77,12 @@ router.post('/wallet/topup', authRequired, async (req, res, next) => {
 
     let result;
 
+    console.log('WALLET TOPUP REQUEST:', {
+  userId,
+  amount_aed,
+  provider,
+});
+
     if (provider === 'ziina') {
       result = await ziinaService.createWalletTopupPaymentIntent(
         userId,
