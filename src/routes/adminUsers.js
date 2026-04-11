@@ -12,9 +12,7 @@ function requireAdmin(req, res, next) {
 
 router.use(dashboardAuthRequired, requireAdmin);
 
-//
 // GET /dashboard/admin/users
-//
 router.get("/", async (req, res, next) => {
   try {
     const {
@@ -87,9 +85,7 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-//
 // GET /dashboard/admin/users/stats
-//
 router.get("/stats", async (req, res, next) => {
   try {
     const [{ total_users }] = await db("users").count("* as total_users");
@@ -119,9 +115,113 @@ router.get("/stats", async (req, res, next) => {
   }
 });
 
-//
+// GET /dashboard/admin/users/export
+router.get("/export", async (req, res, next) => {
+  try {
+    const {
+      search,
+      status,
+      sort = "created_desc",
+    } = req.query;
+
+    let query = db("users as u")
+      .select([
+        "u.id",
+        "u.name",
+        "u.phone",
+        "u.email",
+        "u.wallet_balance_aed",
+        "u.is_active",
+        "u.is_blocked",
+        "u.created_at",
+        db.raw("COUNT(DISTINCT b.id) as total_bookings"),
+        db.raw("COALESCE(SUM(b.total_aed),0) as total_spent_aed"),
+        db.raw("MAX(b.scheduled_at) as last_booking_at"),
+      ])
+      .leftJoin("bookings as b", "b.user_id", "u.id")
+      .groupBy("u.id");
+
+    // Search filter
+    if (search) {
+      query = query.where(function () {
+        this.whereILike("u.name", `%${search}%`)
+          .orWhereILike("u.phone", `%${search}%`)
+          .orWhereILike("u.email", `%${search}%`);
+      });
+    }
+
+    // Status filter
+    if (status === "active") {
+      query = query.where("u.is_blocked", false);
+    }
+
+    if (status === "blocked") {
+      query = query.where("u.is_blocked", true);
+    }
+
+    // Sort
+    if (sort === "created_desc") {
+      query = query.orderBy("u.created_at", "desc");
+    } else if (sort === "created_asc") {
+      query = query.orderBy("u.created_at", "asc");
+    } else if (sort === "spent_desc") {
+      query = query.orderByRaw("COALESCE(SUM(b.total_aed),0) DESC");
+    } else if (sort === "bookings_desc") {
+      query = query.orderByRaw("COUNT(DISTINCT b.id) DESC");
+    } else if (sort === "name_asc") {
+      query = query.orderBy("u.name", "asc");
+    }
+
+    const rows = await query;
+
+    const headers = [
+      "User ID",
+      "Name",
+      "Phone",
+      "Email",
+      "Wallet Balance AED",
+      "Is Active",
+      "Is Blocked",
+      "Total Bookings",
+      "Total Spent AED",
+      "Last Booking At",
+      "Created At",
+    ];
+
+    const csvRows = rows.map((u) => [
+      u.id,
+      u.name || "",
+      u.phone || "",
+      u.email || "",
+      Number(u.wallet_balance_aed || 0),
+      Boolean(u.is_active),
+      Boolean(u.is_blocked),
+      Number(u.total_bookings || 0),
+      Number(u.total_spent_aed || 0),
+      u.last_booking_at || "",
+      u.created_at || "",
+    ]);
+
+    const escapeCsv = (value) =>
+      `"${String(value ?? "").replace(/"/g, '""')}"`;
+
+    const csv = [
+      headers.map(escapeCsv).join(","),
+      ...csvRows.map((row) => row.map(escapeCsv).join(",")),
+    ].join("\n");
+
+    const fileName = `users-export-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+
+    res.send(csv);
+  } catch (e) {
+    next(e);
+  }
+});
+
 // GET /dashboard/admin/users/:id
-//
 router.get("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -180,9 +280,7 @@ router.get("/:id", async (req, res, next) => {
   }
 });
 
-//
 // POST /dashboard/admin/users/:id/toggle-block
-//
 router.post("/:id/toggle-block", async (req, res, next) => {
   try {
     const { id } = req.params;
