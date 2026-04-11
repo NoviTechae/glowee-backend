@@ -34,8 +34,8 @@ const response = await axios.post(
     currency_code: 'AED',
     test: true,
     message: `Glowee Wallet Topup - AED ${amountAed}`,
-    success_url: `${process.env.APP_URL}/wallet/payment/success`,
-    cancel_url: `${process.env.APP_URL}/wallet/payment/cancel`,
+success_url: 'https://example.com/success',
+cancel_url: 'https://example.com/cancel',
   },
   {
     headers: {
