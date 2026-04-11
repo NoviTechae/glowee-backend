@@ -487,52 +487,6 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
   }
 });
 
-// GET /dashboard/admin/feedback
-router.get("/feedback", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
-  try {
-    const { rating, salon_id, limit = 100 } = req.query;
-
-    let query = db("booking_ratings as r")
-      .leftJoin("users as u", "u.id", "r.user_id")
-      .leftJoin("salons as s", "s.id", "r.salon_id")
-      .leftJoin("branches as br", "br.id", "r.branch_id")
-      .select([
-        "r.id",
-        "r.booking_id",
-        "r.user_id",
-        "r.rating",
-        "r.comment",
-        "r.created_at",
-        "u.name as user_name",
-        "s.id as salon_id",
-        "s.name as salon_name",
-        "br.name as branch_name",
-      ])
-      .orderBy("r.created_at", "desc")
-      .limit(Number(limit));
-
-    // Filter by exact rating
-    if (rating && rating !== "all") {
-      if (rating === "low") {
-        query = query.where("r.rating", "<=", 2);
-      } else {
-        query = query.where("r.rating", Number(rating));
-      }
-    }
-
-    // Filter by salon
-    if (salon_id) {
-      query = query.where("r.salon_id", salon_id);
-    }
-
-    const rows = await query;
-
-    res.json({ data: rows });
-  } catch (e) {
-    next(e);
-  }
-});
-
 router.use("/notifications", require("./adminNotifications"));
 router.use("/payments", require("./adminPayments"));
 router.use("/wallet", require("./adminWallet"));
@@ -540,5 +494,6 @@ router.use("/bookings", require("./adminBookings"));
 router.use("/users", require("./adminUsers"));
 router.use("/gift-themes", require("./adminGiftThemes"));
 router.use("/mobile-banners", require("./adminMobileBanners"));
+router.use("/feedback", require("./adminFeedback"));
 
 module.exports = router;
