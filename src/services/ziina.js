@@ -27,14 +27,23 @@ const ziinaClient = axios.create({
  */
 async function createWalletTopupPaymentIntent(userId, amountAed, userPhone, userName, userEmail) {
   try {
-    const response = await ziinaClient.post('/payment_intent', {
-      amount: Math.round(amountAed * 100), // fils
-      currency_code: 'AED',
-      test: true, // غيريها false بعد ما تتأكدين أن كل شيء شغال
-      message: `Glowee Wallet Topup - AED ${amountAed}`,
-      success_url: `${process.env.APP_URL}/wallet/payment/success`,
-      cancel_url: `${process.env.APP_URL}/wallet/payment/cancel`,
-    });
+const response = await axios.post(
+  'https://api-v2.ziina.com/api/payment_intent',
+  {
+    amount: Math.round(amountAed * 100),
+    currency_code: 'AED',
+    test: true,
+    message: `Glowee Wallet Topup - AED ${amountAed}`,
+    success_url: `${process.env.APP_URL}/wallet/payment/success`,
+    cancel_url: `${process.env.APP_URL}/wallet/payment/cancel`,
+  },
+  {
+    headers: {
+      Authorization: `Bearer ${ZIINA_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  }
+);
 
     const paymentIntent = response.data;
 
