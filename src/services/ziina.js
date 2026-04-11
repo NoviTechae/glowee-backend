@@ -28,10 +28,24 @@ const ziinaClient = axios.create({
   },
 });
 
-function buildTestUrls() {
+function buildWalletUrls() {
   return {
-success_url: `${process.env.APP_URL}/wallet/payment/success`,
-cancel_url: `${process.env.APP_URL}/wallet/payment/cancel`,
+    success_url: `${process.env.APP_URL}/wallet/payment/success`,
+    cancel_url: `${process.env.APP_URL}/wallet/payment/cancel`,
+  };
+}
+
+function buildBookingUrls() {
+  return {
+    success_url: `${process.env.APP_URL}/booking/payment/success`,
+    cancel_url: `${process.env.APP_URL}/booking/payment/cancel`,
+  };
+}
+
+function buildGiftUrls() {
+  return {
+    success_url: `${process.env.APP_URL}/gift/payment/success`,
+    cancel_url: `${process.env.APP_URL}/gift/payment/cancel`,
   };
 }
 
@@ -50,7 +64,7 @@ async function createWalletTopupPaymentIntent(
       amount: Math.round(amountAed * 100),
       currency_code: 'AED',
       message: 'Glowee Test',
-      ...buildTestUrls(),
+      ...buildWalletUrls(),
 test: false,
     };
 
@@ -132,7 +146,7 @@ async function createBookingPaymentIntent(
       amount: Math.round(amountAed * 100),
       currency_code: 'AED',
       message: `Glowee Booking #${bookingId}`,
-      ...buildTestUrls(),
+      ...buildBookingUrls(),
 test: false,
     };
 
@@ -215,7 +229,7 @@ async function createGiftPaymentIntent(
       amount: Math.round(amountAed * 100),
       currency_code: 'AED',
       message: 'Glowee Gift Payment',
-      ...buildTestUrls(),
+      ...buildGiftUrls(),
 test: false,
     };
 
