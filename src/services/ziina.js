@@ -240,6 +240,39 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
   }
 }
 
+async function createBookingPaymentIntent(bookingId, amountAed, phone, name, email) {
+  const response = await ziinaClient.post('/payment_intent', {
+    amount: Math.round(amountAed * 100),
+    currency_code: 'AED',
+    message: `Glowee Booking #${bookingId}`,
+    success_url: `${process.env.APP_URL}/booking/success`,
+    cancel_url: `${process.env.APP_URL}/booking/cancel`,
+    test: true,
+  });
+
+  const pi = response.data;
+
+  const [transaction] = await db('payment_transactions')
+    .insert({
+      booking_id: bookingId,
+      provider: 'ziina',
+      type: 'booking_payment',
+      status: 'pending',
+      amount_aed: amountAed,
+      provider_payment_id: pi.id,
+      metadata: { payment_url: pi.redirect_url },
+      created_at: db.fn.now(),
+    })
+    .returning('*');
+
+  return {
+    ok: true,
+    payment_url: pi.redirect_url,
+    payment_intent_id: pi.id,
+    transaction_id: transaction.id,
+  };
+}
+
 module.exports = {
   createWalletTopupPaymentIntent,
   getPaymentIntentStatus,
