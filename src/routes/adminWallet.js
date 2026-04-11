@@ -100,4 +100,76 @@ router.get("/", async (req, res, next) => {
   }
 });
 
+// GET /dashboard/admin/wallet/users/:userId
+router.get("/users/:userId", async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await db("users as u")
+      .leftJoin("wallets as w", "w.user_id", "u.id")
+      .where("u.id", userId)
+      .first([
+        "u.id",
+        "u.name",
+        "u.phone",
+        "u.email",
+        "u.is_active",
+        "u.is_blocked",
+        "u.created_at",
+        "w.balance_aed",
+      ]);
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const txRows = await db("wallet_transactions")
+      .where({ user_id: userId })
+      .orderBy("created_at", "desc")
+      .select([
+        "id",
+        "type",
+        "amount_aed",
+        "note",
+        "ref_id",
+        "created_at",
+      ]);
+
+    const grouped = txRows.reduce(
+      (acc, row) => {
+        const amount = Number(row.amount_aed || 0);
+
+        if (row.type === "topup") acc.total_topups += amount;
+        if (row.type === "spent") acc.total_spent += amount;
+        if (row.type === "refund") acc.total_refunds += amount;
+        if (row.type === "gift_sent") acc.total_gifts_sent += amount;
+        if (row.type === "gift_received") acc.total_gifts_received += amount;
+
+        return acc;
+      },
+      {
+        total_topups: 0,
+        total_spent: 0,
+        total_refunds: 0,
+        total_gifts_sent: 0,
+        total_gifts_received: 0,
+      }
+    );
+
+    res.json({
+      user: {
+        ...user,
+        balance_aed: Number(user.balance_aed || 0),
+      },
+      stats: grouped,
+      transactions: txRows.map((row) => ({
+        ...row,
+        amount_aed: Number(row.amount_aed || 0),
+      })),
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
 module.exports = router;
