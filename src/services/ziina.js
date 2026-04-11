@@ -27,32 +27,37 @@ const ziinaClient = axios.create({
  */
 async function createWalletTopupPaymentIntent(userId, amountAed, userPhone, userName, userEmail) {
   try {
-const response = await axios.post(
-  'https://api-v2.ziina.com/api/payment_intent',
-  {
-    amount: Math.round(amountAed * 100),
-    currency_code: 'AED',
-    test: true,
-    message: `Glowee Wallet Topup - AED ${amountAed}`,
-success_url: 'https://example.com/success',
-cancel_url: 'https://example.com/cancel',
-  },
-  {
-    headers: {
-      Authorization: `Bearer ${ZIINA_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-  }
-);
+    const key = (process.env.ZIINA_API_KEY || '').trim();
+
+    console.log('Creating Ziina payment intent...', {
+      keyPrefix: key.slice(0, 12),
+      keySuffix: key.slice(-8),
+      amountAed,
+    });
+
+    const payload = {
+      amount: Math.round(amountAed * 100),
+      currency_code: 'AED',
+      message: 'Glowee Test',
+      success_url: 'https://example.com/success',
+      cancel_url: 'https://example.com/cancel',
+      test: true,
+    };
+
+    console.log('ZIINA PAYLOAD:', payload);
+
+    const response = await axios.post(
+      'https://api-v2.ziina.com/api/payment_intent',
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
 
     const paymentIntent = response.data;
-
-    if (!paymentIntent?.id || !paymentIntent?.redirect_url) {
-      return {
-        ok: false,
-        error: 'Ziina did not return a valid payment intent',
-      };
-    }
 
     const [transaction] = await db('payment_transactions')
       .insert({
