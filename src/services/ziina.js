@@ -1,8 +1,13 @@
+// src/services/ziina.js
 const axios = require('axios');
 const db = require('../db/knex');
 
 const ZIINA_API_URL = 'https://api-v2.ziina.com/api';
 const ZIINA_API_KEY = process.env.ZIINA_API_KEY;
+
+console.log('ZIINA KEY EXISTS:', !!process.env.ZIINA_API_KEY);
+console.log('ZIINA KEY PREFIX:', process.env.ZIINA_API_KEY?.slice(0, 8));
+console.log('ZIINA API URL:', ZIINA_API_URL);
 
 if (!ZIINA_API_KEY) {
   console.warn('ZIINA_API_KEY is not set');
@@ -70,7 +75,12 @@ async function createWalletTopupPaymentIntent(userId, amountAed, userPhone, user
       status: paymentIntent.status || 'pending',
     };
   } catch (error) {
-    console.error('Ziina create payment intent error:', error.response?.data || error.message);
+    console.error('Ziina create payment intent error full:', {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message,
+    });
+    
     return {
       ok: false,
       error: error.response?.data?.message || error.message,
