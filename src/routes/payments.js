@@ -4,6 +4,7 @@ const router = require('express').Router();
 const { z } = require('zod');
 const authRequired = require('../middleware/authRequired');
 const tapService = require('../services/tap');
+const ziinaService = require('../services/ziina');
 const db = require('../db/knex');
 
 // ========================================
@@ -14,25 +15,85 @@ const db = require('../db/knex');
  * POST /payments/wallet/topup
  * Create Tap payment charge for wallet topup
  */
-const TapTopupSchema = z.object({
+// const TapTopupSchema = z.object({
+//   amount_aed: z.number().min(10).max(10000),
+// });
+
+const WalletTopupSchema = z.object({
   amount_aed: z.number().min(10).max(10000),
+  provider: z.enum(['tap', 'ziina']).optional().default('ziina'),
 });
+
+// router.post('/wallet/topup', authRequired, async (req, res, next) => {
+//   try {
+//     const { amount_aed } = TapTopupSchema.parse(req.body);
+//     const userId = req.user.sub;
+    
+//     // Get user details
+//     const user = await db('users').where({ id: userId }).first();
+    
+//     const result = await tapService.createWalletTopupCharge(
+//       userId,
+//       amount_aed,
+//       user.phone,
+//       user.name,
+//       user.email
+//     );
+
+//     if (!result.ok) {
+//       return res.status(400).json({
+//         error: result.error,
+//         code: result.code,
+//       });
+//     }
+
+//     return res.json({
+//       ok: true,
+//       charge_id: result.charge_id,
+//       transaction_id: result.transaction_id,
+//       payment_url: result.payment_url, // Redirect user here
+//       amount: result.amount,
+//       status: result.status,
+//     });
+//   } catch (error) {
+//     next(error);
+//   }
+// });
+
+// ========================================
+// SAVED CARDS
+// ========================================
 
 router.post('/wallet/topup', authRequired, async (req, res, next) => {
   try {
-    const { amount_aed } = TapTopupSchema.parse(req.body);
+    const { amount_aed, provider } = WalletTopupSchema.parse(req.body);
     const userId = req.user.sub;
-    
-    // Get user details
+
     const user = await db('users').where({ id: userId }).first();
-    
-    const result = await tapService.createWalletTopupCharge(
-      userId,
-      amount_aed,
-      user.phone,
-      user.name,
-      user.email
-    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    let result;
+
+    if (provider === 'ziina') {
+      result = await ziinaService.createWalletTopupPaymentIntent(
+        userId,
+        amount_aed,
+        user.phone,
+        user.name,
+        user.email
+      );
+    } else {
+      result = await tapService.createWalletTopupCharge(
+        userId,
+        amount_aed,
+        user.phone,
+        user.name,
+        user.email
+      );
+    }
 
     if (!result.ok) {
       return res.status(400).json({
@@ -43,9 +104,11 @@ router.post('/wallet/topup', authRequired, async (req, res, next) => {
 
     return res.json({
       ok: true,
-      charge_id: result.charge_id,
+      provider,
+      charge_id: result.charge_id || null,
+      payment_intent_id: result.payment_intent_id || null,
       transaction_id: result.transaction_id,
-      payment_url: result.payment_url, // Redirect user here
+      payment_url: result.payment_url,
       amount: result.amount,
       status: result.status,
     });
@@ -53,10 +116,6 @@ router.post('/wallet/topup', authRequired, async (req, res, next) => {
     next(error);
   }
 });
-
-// ========================================
-// SAVED CARDS
-// ========================================
 
 /**
  * GET /payments/cards
@@ -224,6 +283,61 @@ router.post('/webhooks/tap', async (req, res) => {
   } catch (error) {
     console.error('Tap webhook handling error:', error);
     res.status(500).json({ error: 'Webhook handler failed' });
+  }
+});
+
+router.get('/verify/ziina/:paymentIntentId', authRequired, async (req, res, next) => {
+  try {
+    const { paymentIntentId } = req.params;
+
+    const transaction = await db('payment_transactions')
+      .where({
+        provider_payment_id: paymentIntentId,
+        provider: 'ziina',
+        user_id: req.user.sub,
+      })
+      .first();
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    if (transaction.status === 'succeeded') {
+      return res.json({
+        ok: true,
+        status: 'succeeded',
+        amount: Number(transaction.amount_aed),
+      });
+    }
+
+    const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
+
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    // عدلي أسماء statuses حسب Ziina الحقيقي
+    if (['completed', 'paid', 'succeeded'].includes(String(result.status).toLowerCase())) {
+      const successResult = await ziinaService.handlePaymentIntentSuccess(paymentIntentId, result.raw);
+
+      if (!successResult.ok && !successResult.already_processed) {
+        return res.status(500).json({ error: successResult.error });
+      }
+
+      return res.json({
+        ok: true,
+        status: 'succeeded',
+        amount: Number(transaction.amount_aed),
+      });
+    }
+
+    return res.json({
+      ok: true,
+      status: result.status,
+      amount: result.amount,
+    });
+  } catch (error) {
+    next(error);
   }
 });
 
