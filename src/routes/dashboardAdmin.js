@@ -636,7 +636,7 @@ router.post("/gift-themes/reorder", dashboardAuthRequired, requireAdmin, async (
   }
 });
 
-module.exports = router;
+// module.exports = router;
 
 // Enhanced stats endpoint (replace existing one)
 router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
@@ -710,141 +710,6 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
       },
       ...(userStats && { users: userStats }),
       ...(bookingStats && { bookings: bookingStats }),
-    });
-  } catch (e) {
-    next(e);
-  }
-});
-
-// Add to dashboardAdmin.js
-
-// GET /dashboard/admin/bookings - List all bookings
-router.get("/bookings", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
-  try {
-    const { status, search, date, mode, limit = 100 } = req.query;
-
-    let query = db("bookings as b")
-      .leftJoin("users as u", "u.id", "b.user_id")
-      .leftJoin("salons as s", "s.id", "b.salon_id")
-      .leftJoin("branches as br", "br.id", "b.branch_id")
-      .select([
-        "b.id",
-        "b.user_id",
-        "b.salon_id",
-        "b.branch_id",
-        "b.scheduled_at",
-        "b.mode",
-        "b.status",
-        "b.total_aed",
-        "b.subtotal_aed",
-        "b.fees_aed",
-        "b.customer_note",
-        "b.created_at",
-        "u.name as user_name",
-        "u.phone as user_phone",
-        "s.name as salon_name",
-        "br.name as branch_name",
-      ])
-      .orderBy("b.created_at", "desc")
-      .limit(Number(limit));
-
-    if (search) {
-      query = query.where(function () {
-        this.whereILike("u.name", `%${search}%`)
-          .orWhereILike("u.phone", `%${search}%`)
-          .orWhereILike("s.name", `%${search}%`)
-          .orWhereILike("br.name", `%${search}%`)
-          .orWhereILike("b.id", `%${search}%`);
-      });
-    }
-
-    if (status && status !== "all") {
-      query = query.where("b.status", status);
-    }
-
-    if (mode && mode !== "all") {
-      query = query.where("b.mode", mode);
-    }
-
-    if (date) {
-      query = query.whereRaw("DATE(b.scheduled_at) = ?", [date]);
-    }
-
-    const bookings = await query;
-    res.json({ data: bookings });
-  } catch (e) {
-    next(e);
-  }
-});
-
-// GET /dashboard/admin/bookings/stats - Get booking statistics
-router.get("/bookings/stats", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
-  try {
-    const [{ total }] = await db("bookings").count("* as total");
-
-    const [{ pending }] = await db("bookings").where({ status: "pending" }).count("* as pending");
-
-    const [{ confirmed }] = await db("bookings")
-      .where({ status: "confirmed" })
-      .count("* as confirmed");
-
-    const [{ completed }] = await db("bookings")
-      .where({ status: "completed" })
-      .count("* as completed");
-
-    const [{ cancelled }] = await db("bookings")
-      .where({ status: "cancelled" })
-      .count("* as cancelled");
-
-    const [{ today }] = await db("bookings")
-      .whereRaw("DATE(scheduled_at) = CURRENT_DATE")
-      .count("* as today");
-
-    const [{ this_month }] = await db("bookings")
-      .whereRaw("DATE_TRUNC('month', scheduled_at) = DATE_TRUNC('month', CURRENT_DATE)")
-      .count("* as this_month");
-
-    res.json({
-      total: Number(total),
-      pending: Number(pending),
-      confirmed: Number(confirmed),
-      completed: Number(completed),
-      cancelled: Number(cancelled),
-      today: Number(today),
-      thisMonth: Number(this_month),
-    });
-  } catch (e) {
-    next(e);
-  }
-});
-
-// POST /dashboard/admin/bookings/:id/cancel - Cancel a booking
-router.post("/bookings/:id/cancel", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
-  try {
-    const { id } = req.params;
-    const { reason } = req.body;
-
-    const booking = await db("bookings").where({ id }).first();
-    if (!booking) {
-      return res.status(404).json({ error: "Booking not found" });
-    }
-
-    if (booking.status === "cancelled" || booking.status === "completed") {
-      return res.status(400).json({
-        error: `Cannot cancel ${booking.status} booking`
-      });
-    }
-
-    await db("bookings")
-      .where({ id })
-      .update({
-        status: "cancelled",
-        updated_at: db.fn.now(),
-      });
-
-    res.json({
-      ok: true,
-      message: "Booking cancelled successfully"
     });
   } catch (e) {
     next(e);
@@ -1029,72 +894,6 @@ router.get("/users/:id", dashboardAuthRequired, requireAdmin, async (req, res, n
   }
 });
 
-// GET /dashboard/admin/bookings/:id
-router.get("/bookings/:id", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
-  try {
-    const { id } = req.params;
-
-    const booking = await db("bookings as b")
-      .where("b.id", id)
-      .leftJoin("users as u", "u.id", "b.user_id")
-      .leftJoin("salons as s", "s.id", "b.salon_id")
-      .leftJoin("branches as br", "br.id", "b.branch_id")
-      .select([
-        "b.id",
-        "b.user_id",
-        "b.salon_id",
-        "b.branch_id",
-        "b.scheduled_at",
-        "b.mode",
-        "b.status",
-        "b.total_aed",
-        "b.subtotal_aed",
-        "b.fees_aed",
-        "b.customer_note",
-        "b.created_at",
-        "b.updated_at",
-        "u.name as user_name",
-        "u.phone as user_phone",
-        "u.email as user_email",
-        "s.name as salon_name",
-        "br.name as branch_name",
-        "br.city as branch_city",
-        "br.area as branch_area",
-        "br.address_line as branch_address",
-      ])
-      .first();
-
-    if (!booking) return res.status(404).json({ error: "Booking not found" });
-
-    // Line items
-    const items = await db("booking_items")
-      .where({ booking_id: id })
-      .select([
-        "id",
-        "service_name",
-        "qty",
-        "unit_price_aed",
-        "duration_mins",
-      ]);
-
-    res.json({
-      booking: {
-        ...booking,
-        total_aed: Number(booking.total_aed || 0),
-        subtotal_aed: Number(booking.subtotal_aed || 0),
-        fees_aed: Number(booking.fees_aed || 0),
-      },
-      items: items.map((it) => ({
-        ...it,
-        qty: Number(it.qty || 1),
-        unit_price_aed: Number(it.unit_price_aed || 0),
-        duration_mins: Number(it.duration_mins || 0),
-      })),
-    });
-  } catch (e) {
-    next(e);
-  }
-});
 
 // GET /dashboard/admin/feedback
 router.get("/feedback", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
@@ -1383,5 +1182,6 @@ router.post(
 router.use("/notifications", require("./adminNotifications"));
 router.use("/payments", require("./adminPayments"));
 router.use("/wallet", require("./adminWallet"));
+router.use("/bookings", require("./adminBookings"));
 
 module.exports = router;
