@@ -226,4 +226,156 @@ router.post("/:id/refund", async (req, res, next) => {
   }
 });
 
+// GET /dashboard/admin/payments/export
+router.get("/export", async (req, res, next) => {
+  try {
+    const {
+      search,
+      status,
+      provider,
+      type,
+      from,
+      to,
+    } = req.query;
+
+    let query = db("payment_transactions as pt")
+      .leftJoin("users as u", "u.id", "pt.user_id")
+      .leftJoin("bookings as b", "b.id", "pt.booking_id")
+      .leftJoin("salons as s", "s.id", "b.salon_id")
+      .select([
+        "pt.id",
+        "pt.provider",
+        "pt.type",
+        "pt.status",
+        "pt.amount_aed",
+        "pt.fee_aed",
+        "pt.net_amount_aed",
+        "pt.provider_payment_id",
+        "pt.payment_method_type",
+        "pt.card_last4",
+        "pt.card_brand",
+        "pt.booking_id",
+        "pt.gift_id",
+        "pt.wallet_transaction_id",
+        "pt.error_message",
+        "pt.error_code",
+        "pt.created_at",
+        "pt.succeeded_at",
+        "pt.failed_at",
+        "pt.refunded_at",
+        "u.name as user_name",
+        "u.phone as user_phone",
+        "u.email as user_email",
+        "s.name as salon_name",
+      ])
+      .orderBy("pt.created_at", "desc");
+
+    if (search) {
+      query = query.where(function () {
+        this.whereILike("pt.id", `%${search}%`)
+          .orWhereILike("pt.provider_payment_id", `%${search}%`)
+          .orWhereILike("u.name", `%${search}%`)
+          .orWhereILike("u.phone", `%${search}%`)
+          .orWhereILike("u.email", `%${search}%`)
+          .orWhereILike("s.name", `%${search}%`);
+      });
+    }
+
+    if (status && status !== "all") {
+      query = query.where("pt.status", status);
+    }
+
+    if (provider && provider !== "all") {
+      query = query.where("pt.provider", provider);
+    }
+
+    if (type && type !== "all") {
+      query = query.where("pt.type", type);
+    }
+
+    if (from) {
+      query = query.whereRaw("DATE(pt.created_at) >= ?", [from]);
+    }
+
+    if (to) {
+      query = query.whereRaw("DATE(pt.created_at) <= ?", [to]);
+    }
+
+    const rows = await query;
+
+    const escapeCsv = (value) => {
+      if (value === null || value === undefined) return "";
+      const str = String(value).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const headers = [
+      "Transaction ID",
+      "User Name",
+      "User Phone",
+      "User Email",
+      "Salon",
+      "Provider",
+      "Type",
+      "Status",
+      "Amount AED",
+      "Fee AED",
+      "Net Amount AED",
+      "Payment Method",
+      "Card Brand",
+      "Card Last4",
+      "Provider Payment ID",
+      "Booking ID",
+      "Gift ID",
+      "Wallet Transaction ID",
+      "Error Message",
+      "Error Code",
+      "Created At",
+      "Succeeded At",
+      "Failed At",
+      "Refunded At",
+    ];
+
+    const csvRows = rows.map((row) => [
+      row.id,
+      row.user_name || "",
+      row.user_phone || "",
+      row.user_email || "",
+      row.salon_name || "",
+      row.provider || "",
+      row.type || "",
+      row.status || "",
+      Number(row.amount_aed || 0),
+      Number(row.fee_aed || 0),
+      Number(row.net_amount_aed || 0),
+      row.payment_method_type || "",
+      row.card_brand || "",
+      row.card_last4 || "",
+      row.provider_payment_id || "",
+      row.booking_id || "",
+      row.gift_id || "",
+      row.wallet_transaction_id || "",
+      row.error_message || "",
+      row.error_code || "",
+      row.created_at || "",
+      row.succeeded_at || "",
+      row.failed_at || "",
+      row.refunded_at || "",
+    ]);
+
+    const csv = [
+      headers.map(escapeCsv).join(","),
+      ...csvRows.map((row) => row.map(escapeCsv).join(",")),
+    ].join("\n");
+
+    const fileName = `payments-export-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.status(200).send(csv);
+  } catch (e) {
+    next(e);
+  }
+});
+
 module.exports = router;
