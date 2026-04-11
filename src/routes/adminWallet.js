@@ -50,6 +50,89 @@ router.get("/stats", async (req, res, next) => {
   }
 });
 
+// GET /dashboard/admin/wallet/export
+router.get("/export", async (req, res, next) => {
+  try {
+    const { search, type } = req.query;
+
+    let query = db("wallet_transactions as wt")
+      .leftJoin("users as u", "u.id", "wt.user_id")
+      .select([
+        "wt.id",
+        "wt.user_id",
+        "wt.type",
+        "wt.amount_aed",
+        "wt.note",
+        "wt.ref_id",
+        "wt.created_at",
+        "u.name as user_name",
+        "u.phone as user_phone",
+        "u.email as user_email",
+      ])
+      .orderBy("wt.created_at", "desc");
+
+    if (search) {
+      query = query.where(function () {
+        this.whereILike("u.name", `%${search}%`)
+          .orWhereILike("u.phone", `%${search}%`)
+          .orWhereILike("u.email", `%${search}%`)
+          .orWhereILike("wt.id", `%${search}%`);
+      });
+    }
+
+    if (type && type !== "all") {
+      query = query.where("wt.type", type);
+    }
+
+    const rows = await query;
+
+    const escapeCsv = (value) => {
+      if (value === null || value === undefined) return "";
+      const str = String(value).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const headers = [
+      "Transaction ID",
+      "User ID",
+      "User Name",
+      "User Phone",
+      "User Email",
+      "Type",
+      "Amount AED",
+      "Note",
+      "Reference ID",
+      "Created At",
+    ];
+
+    const csvRows = rows.map((row) => [
+      row.id,
+      row.user_id,
+      row.user_name || "",
+      row.user_phone || "",
+      row.user_email || "",
+      row.type || "",
+      Number(row.amount_aed || 0),
+      row.note || "",
+      row.ref_id || "",
+      row.created_at || "",
+    ]);
+
+    const csv = [
+      headers.map(escapeCsv).join(","),
+      ...csvRows.map((row) => row.map(escapeCsv).join(",")),
+    ].join("\n");
+
+    const fileName = `wallet-export-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    return res.status(200).send(csv);
+  } catch (e) {
+    next(e);
+  }
+});
+
 //
 // GET /dashboard/admin/wallet
 //
