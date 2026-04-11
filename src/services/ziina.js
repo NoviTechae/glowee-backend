@@ -2,8 +2,16 @@
 const axios = require('axios');
 const db = require('../db/knex');
 
-const ZIINA_API_URL = 'https://api-v2.ziina.com/api';
+const crypto = require('crypto');
 const ZIINA_API_KEY = (process.env.ZIINA_API_KEY || '').trim();
+
+console.log(
+  'ZIINA KEY SHA256:',
+  crypto.createHash('sha256').update(ZIINA_API_KEY).digest('hex')
+);
+
+const ZIINA_API_URL = 'https://api-v2.ziina.com/api';
+//const ZIINA_API_KEY = (process.env.ZIINA_API_KEY || '').trim();
 
 if (!ZIINA_API_KEY) {
   console.warn('ZIINA_API_KEY is not set');
