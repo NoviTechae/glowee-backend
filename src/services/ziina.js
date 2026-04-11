@@ -30,8 +30,8 @@ const ziinaClient = axios.create({
 
 function buildTestUrls() {
   return {
-    success_url: 'https://example.com/success',
-    cancel_url: 'https://example.com/cancel',
+success_url: `${process.env.APP_URL}/wallet/payment/success`,
+cancel_url: `${process.env.APP_URL}/wallet/payment/cancel`,
   };
 }
 
@@ -51,7 +51,7 @@ async function createWalletTopupPaymentIntent(
       currency_code: 'AED',
       message: 'Glowee Test',
       ...buildTestUrls(),
-      test: true,
+test: false,
     };
 
     console.log('Creating Ziina wallet payment intent...', {
@@ -133,7 +133,7 @@ async function createBookingPaymentIntent(
       currency_code: 'AED',
       message: `Glowee Booking #${bookingId}`,
       ...buildTestUrls(),
-      test: true,
+test: false,
     };
 
     console.log('Creating Ziina booking payment intent...', {
@@ -216,7 +216,7 @@ async function createGiftPaymentIntent(
       currency_code: 'AED',
       message: 'Glowee Gift Payment',
       ...buildTestUrls(),
-      test: true,
+test: false,
     };
 
     console.log('Creating Ziina gift payment intent...', {
