@@ -65,7 +65,7 @@ async function createWalletTopupPaymentIntent(
       currency_code: "AED",
       message: "Glowee Top-up",
       ...buildWalletUrls(),
-      test: true,
+      test: false,
     };
 
     console.log("Creating Ziina wallet payment intent...", {
@@ -155,7 +155,7 @@ async function createBookingPaymentIntent(
       currency_code: "AED",
       message: "Glowee · Beauty Booking",
       ...buildBookingUrls(),
-      test: true,
+      test: false,
     };
 
     console.log("Creating Ziina booking payment intent...", {
@@ -240,7 +240,7 @@ async function createGiftPaymentIntent(
       currency_code: "AED",
       message: "Glowee Gift Payment",
       ...buildGiftUrls(),
-      test: true,
+      test: false,
     };
 
     console.log("Creating Ziina gift payment intent...", {
