@@ -503,6 +503,155 @@ router.get('/ziina/booking/cancel', async (req, res) => {
   }
 });
 
+router.get('/ziina/gift/success', async (req, res) => {
+  try {
+    const paymentIntentId =
+      req.query.payment_intent_id ||
+      req.query.id ||
+      req.query.payment_intent ||
+      null;
+
+    console.log('Ziina gift success query:', req.query);
+
+    if (!paymentIntentId) {
+      return res.status(400).send('Missing payment_intent_id');
+    }
+
+    const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
+
+    console.log('Ziina gift success status:', {
+      paymentIntentId,
+      status: result.status,
+      raw: result.raw,
+    });
+
+    if (!result.ok) {
+      console.error('Ziina gift success verify failed:', result.error);
+      return res.status(400).send('Unable to verify payment');
+    }
+
+    const normalizedStatus = String(result.status || '').toLowerCase();
+
+    const successStatuses = [
+      'completed',
+      'paid',
+      'succeeded',
+      'success',
+      'successful',
+      'captured',
+      'processed',
+      'requires_capture',
+    ];
+
+    if (successStatuses.includes(normalizedStatus)) {
+      const successResult = await ziinaService.handlePaymentIntentSuccess(
+        paymentIntentId,
+        result.raw
+      );
+
+      console.log('Ziina gift handlePaymentIntentSuccess result:', successResult);
+
+      if (!successResult.ok && !successResult.already_processed) {
+        console.error('Ziina gift success handler failed:', successResult.error);
+        return res.status(500).send('Failed to activate gift');
+      }
+    } else {
+      console.warn('Ziina gift returned non-success status:', normalizedStatus);
+    }
+
+    return res.send(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Gift Payment Successful</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              background: #f8f5f2;
+              color: #111;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              margin: 0;
+              text-align: center;
+              padding: 24px;
+            }
+            .box {
+              max-width: 420px;
+              background: white;
+              border-radius: 16px;
+              padding: 24px;
+              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+            }
+            h1 { margin: 0 0 12px; font-size: 28px; }
+            p { margin: 0; color: #555; }
+          </style>
+        </head>
+        <body>
+          <div class="box">
+            <h1>Gift payment successful</h1>
+            <p>Your gift has been activated. You can return to Glowee.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('Ziina gift success redirect error:', error);
+    return res.status(500).send('Server error');
+  }
+});
+
+router.get('/ziina/gift/cancel', async (req, res) => {
+  try {
+    console.log('Ziina gift cancel query:', req.query);
+    return res.send(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Gift Payment Cancelled</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              background: #f8f5f2;
+              color: #111;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              margin: 0;
+              text-align: center;
+              padding: 24px;
+            }
+            .box {
+              max-width: 420px;
+              background: white;
+              border-radius: 16px;
+              padding: 24px;
+              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+            }
+            h1 { margin: 0 0 12px; font-size: 28px; }
+            p { margin: 0; color: #555; }
+          </style>
+        </head>
+        <body>
+          <div class="box">
+            <h1>Gift payment cancelled</h1>
+            <p>No charge was completed.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error('Ziina gift cancel redirect error:', error);
+    return res.status(500).send('Server error');
+  }
+});
+
 const bookingPayment = require('../controllers/bookingPaymentController');
 const giftPayment = require('../controllers/giftPaymentController');
 

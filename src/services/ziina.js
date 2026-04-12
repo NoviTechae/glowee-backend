@@ -44,8 +44,8 @@ function buildBookingUrls() {
 
 function buildGiftUrls() {
   return {
-    success_url: `${process.env.APP_URL}/gift/payment/success`,
-    cancel_url: `${process.env.APP_URL}/gift/payment/cancel`,
+    success_url: `${process.env.API_URL}/payments/ziina/gift/success`,
+    cancel_url: `${process.env.API_URL}/payments/ziina/gift/cancel`,
   };
 }
 
@@ -415,6 +415,38 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
         });
     }
 
+        if (transaction.type === 'gift_purchase' && transaction.gift_id) {
+      await trx('gifts')
+        .where({ id: transaction.gift_id })
+        .update({
+          status: 'active',
+          updated_at: trx.fn.now(),
+        });
+
+      // نقاط إرسال هدية - فقط عند نجاح الدفع بالكارد/Ziina
+      const { addPoints } = require('../controllers/rewardController');
+      await addPoints(transaction.user_id, 10, 'gift_sent', transaction.gift_id, trx);
+
+      // إشعار واتساب بعد نجاح التفعيل
+      const gift = await trx('gifts')
+        .where({ id: transaction.gift_id })
+        .first();
+
+      if (gift) {
+        const { sendGiftNotification } = require('../services/whatsapp');
+
+        setImmediate(() => {
+          sendGiftNotification(gift.recipient_phone, {
+            code: gift.code,
+            senderName: gift.sender_name || 'Someone',
+            amount: Number(gift.amount_aed || 0).toFixed(2),
+            message: gift.message,
+            themeEmoji: gift.theme_id === 'birthday' ? '🎂' : '🎁',
+          });
+        });
+      }
+    }
+    
     await trx.commit();
 
     return {
