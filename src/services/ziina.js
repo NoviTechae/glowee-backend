@@ -44,8 +44,8 @@ function buildBookingUrls() {
 
 function buildGiftUrls() {
   return {
-    success_url: `${process.env.APP_URL}/gift/payment/success`,
-    cancel_url: `${process.env.APP_URL}/gift/payment/cancel`,
+    success_url: `${process.env.API_URL}/payments/ziina/gift/success`,
+    cancel_url: `${process.env.API_URL}/payments/ziina/gift/cancel`,
   };
 }
 
@@ -411,6 +411,15 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
         .where({ id: transaction.booking_id })
         .update({
           status: 'confirmed',
+          updated_at: trx.fn.now(),
+        });
+    }
+
+    if (transaction.type === 'gift_purchase' && transaction.gift_id) {
+      await trx('gifts')
+        .where({ id: transaction.gift_id })
+        .update({
+          status: 'active',
           updated_at: trx.fn.now(),
         });
     }

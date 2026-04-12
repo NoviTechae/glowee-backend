@@ -16,7 +16,7 @@ router.get("/sent", authRequired, giftController.getSentGifts);
 router.get("/:id", authRequired, giftController.getGiftById);
 
 // // ✅ Redeem
-// router.post("/:id/redeem", authRequired, giftController.redeemGift);
+router.post("/:id/redeem", authRequired, giftController.redeemGift);
 
 // ✅ ارسال هدية
 router.post("/send", authRequired, giftController.sendGift);

@@ -88,7 +88,6 @@ exports.getAvailableGifts = async (req, res, next) => {
 
     const rows = await knex("gifts as g")
       .leftJoin("salons as s", "s.id", "g.salon_id")
-      .leftJoin("gift_themes as gt", knex.raw('gt.id::text'), 'g.theme_id')
       .where("g.recipient_phone", userPhone)
       .andWhere("g.status", "active")
       .andWhere("g.expires_at", ">", knex.fn.now())
@@ -102,47 +101,66 @@ exports.getAvailableGifts = async (req, res, next) => {
         "g.expires_at",
         "g.salon_id",
         "g.amount_aed",
-        "gt.title as theme_title",
-        "gt.front_image_url as image_url",
-        "gt.front_image_url",
-        "gt.back_image_url",
         knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
         knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
       ])
       .orderBy("g.created_at", "desc");
 
     const giftIds = rows.map((r) => r.id);
-    let itemsCounts = {};
+
+    let itemsByGiftId = {};
 
     if (giftIds.length > 0) {
-      const counts = await knex("gift_items")
+      const items = await knex("gift_items")
         .whereIn("gift_id", giftIds)
-        .groupBy("gift_id")
-        .select("gift_id")
-        .count("* as count");
+        .select([
+          "gift_id",
+          "service_name",
+          "qty",
+          "unit_price_aed",
+          // "service_image_url", // إذا ضفتيه لاحقاً
+        ]);
 
-      counts.forEach((c) => {
-        itemsCounts[c.gift_id] = Number(c.count);
+      items.forEach((item) => {
+        if (!itemsByGiftId[item.gift_id]) itemsByGiftId[item.gift_id] = [];
+        itemsByGiftId[item.gift_id].push(item);
       });
     }
 
-const data = rows.map((r) => ({
-  id: r.id,
-  theme_id: r.theme_id,
-  theme_title: r.theme_title,
-  image_url: r.image_url || r.front_image_url,
-  front_image_url: r.front_image_url,
-  back_image_url: r.back_image_url,
-  merchant_name: r.merchant_name,
-  type: r.type,
-  items_count: itemsCounts[r.id] || 0,
-  from_name: r.sender_name,
-  message: r.message,
-  status: "received",
-  created_at: r.created_at,
-  expires_at: r.expires_at,
-  amount_aed: Number(r.amount_aed),
-}));
+    const data = rows.map((r) => {
+      const items = itemsByGiftId[r.id] || [];
+      const firstItem = items[0] || null;
+
+      return {
+        id: r.id,
+        theme_id: r.theme_id,
+        merchant_name: r.merchant_name,
+        type: r.type,
+        items_count: items.length,
+        from_name: r.sender_name,
+        message: r.message,
+        status: "received",
+        created_at: r.created_at,
+        expires_at: r.expires_at,
+        amount_aed: Number(r.amount_aed),
+
+        preview_title:
+          r.type === "gift_card"
+            ? `${Number(r.amount_aed).toFixed(2)} AED`
+            : firstItem?.service_name || "Service Gift",
+
+        preview_subtitle:
+          r.type === "gift_card"
+            ? "Wallet Gift"
+            : r.merchant_name,
+
+        preview_image_url:
+          null, // أو firstItem?.service_image_url || null إذا أضفتيه
+
+        preview_type:
+          r.type === "gift_card" ? "wallet" : "service",
+      };
+    });
 
     res.json({ ok: true, data });
   } catch (err) {
