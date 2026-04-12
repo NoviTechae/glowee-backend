@@ -8,25 +8,24 @@ const authRequired = require("../middleware/authRequired");
 const BodySchema = z
   .object({
     mode: z.enum(["in_salon", "home"]),
-    start_iso: z.string().min(10),
-    staff_id: z.string().uuid().nullable().optional(),
-    customer_note: z.string().max(1000).optional().nullable(),
-    items: z
-      .array(
-        z.object({
-          availability_id: z.string().uuid(),
-          qty: z.number().int().min(1).max(20),
-        })
-      )
-      .min(1),
+  start_iso: z.string(),
+  staff_id: z.string().uuid().nullable().optional(),
+  items: z.array(
+    z.object({
+      availability_id: z.string().uuid(),
+      qty: z.number().int().min(1),
+    })
+  ).min(1),
 
-    // home service fields
-    contact_name: z.string().max(120).optional().nullable(),
-    contact_phone: z.string().max(30).optional().nullable(),
-    area: z.string().max(120).optional().nullable(),
-    address_line1: z.string().max(255).optional().nullable(),
-    address_line2: z.string().max(255).optional().nullable(),
-    location_note: z.string().max(1000).optional().nullable(),
+  contact_name: z.string().optional(),
+  contact_phone: z.string().optional(),
+  area: z.string().optional(),
+  address_line1: z.string().optional(),
+  address_line2: z.string().optional(),
+  location_note: z.string().optional(),
+
+  gift_id: z.string().uuid().optional(),
+  redeem_mode: z.enum(["gift"]).optional(),
   })
   .strict();
 
