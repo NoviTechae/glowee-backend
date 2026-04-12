@@ -145,7 +145,7 @@ async function createBookingPaymentIntent(
     const payload = {
       amount: Math.round(amountAed * 100),
       currency_code: 'AED',
-      message: `Glowee Booking`,
+      message: `Glowee - beauty booking`,
       ...buildBookingUrls(),
 test: false,
     };
