@@ -322,8 +322,7 @@ router.get('/verify/ziina/:paymentIntentId', authRequired, async (req, res, next
       return res.status(400).json({ error: result.error });
     }
 
-    // عدلي أسماء statuses حسب Ziina الحقيقي
-    if (['completed', 'paid', 'succeeded'].includes(String(result.status).toLowerCase())) {
+    if (['completed', 'paid', 'succeeded', 'requires_capture'].includes(String(result.status).toLowerCase())) {
       const successResult = await ziinaService.handlePaymentIntentSuccess(paymentIntentId, result.raw);
 
       if (!successResult.ok && !successResult.already_processed) {
