@@ -56,24 +56,24 @@ exports.getReceivedCards = async (req, res, next) => {
       });
     }
 
-    const data = rows.map((r) => ({
-      id: r.id,
-      theme_id: r.theme_id,
-      theme_title: r.theme_title,
-image_url: row.image_url || row.front_image_url,
-front_image_url: row.front_image_url,
-back_image_url: row.back_image_url,
-      merchant_name: r.merchant_name,
-      type: r.type,
-      items_count: itemsCounts[r.id] || 0,
-      from_name: r.sender_name,
-      message: r.message,
-      status: mapGiftStatus(r.status),
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      redeemed_at: r.redeemed_at,
-      amount_aed: Number(r.amount_aed),
-    }));
+const data = rows.map((r) => ({
+  id: r.id,
+  theme_id: r.theme_id,
+  theme_title: r.theme_title,
+  image_url: r.image_url || r.front_image_url,
+  front_image_url: r.front_image_url,
+  back_image_url: r.back_image_url,
+  merchant_name: r.merchant_name,
+  type: r.type,
+  items_count: itemsCounts[r.id] || 0,
+  from_name: r.sender_name,
+  message: r.message,
+  status: mapGiftStatus(r.status),
+  created_at: r.created_at,
+  expires_at: r.expires_at,
+  redeemed_at: r.redeemed_at,
+  amount_aed: Number(r.amount_aed),
+}));
 
     res.json({ ok: true, data });
   } catch (err) {
@@ -126,23 +126,23 @@ exports.getAvailableGifts = async (req, res, next) => {
       });
     }
 
-    const data = rows.map((r) => ({
-      id: r.id,
-      theme_id: r.theme_id,
-      theme_title: r.theme_title,
-image_url: row.image_url || row.front_image_url,
-front_image_url: row.front_image_url,
-back_image_url: row.back_image_url,
-      merchant_name: r.merchant_name,
-      type: r.type,
-      items_count: itemsCounts[r.id] || 0,
-      from_name: r.sender_name,
-      message: r.message,
-      status: "received",
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      amount_aed: Number(r.amount_aed),
-    }));
+const data = rows.map((r) => ({
+  id: r.id,
+  theme_id: r.theme_id,
+  theme_title: r.theme_title,
+  image_url: r.image_url || r.front_image_url,
+  front_image_url: r.front_image_url,
+  back_image_url: r.back_image_url,
+  merchant_name: r.merchant_name,
+  type: r.type,
+  items_count: itemsCounts[r.id] || 0,
+  from_name: r.sender_name,
+  message: r.message,
+  status: "received",
+  created_at: r.created_at,
+  expires_at: r.expires_at,
+  amount_aed: Number(r.amount_aed),
+}));
 
     res.json({ ok: true, data });
   } catch (err) {
@@ -197,24 +197,24 @@ exports.getSentGifts = async (req, res, next) => {
       });
     }
 
-    const data = rows.map((r) => ({
-      id: r.id,
-      theme_id: r.theme_id,
-      theme_title: r.theme_title,
-image_url: row.image_url || row.front_image_url,
-front_image_url: row.front_image_url,
-back_image_url: row.back_image_url,
-      merchant_name: r.merchant_name,
-      type: r.type,
-      items_count: itemsCounts[r.id] || 0,
-      from_name: r.sender_name || "You",
-      message: r.message,
-      status: mapGiftStatus(r.status),
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      redeemed_at: r.redeemed_at,
-      amount_aed: Number(r.amount_aed),
-    }));
+const data = rows.map((r) => ({
+  id: r.id,
+  theme_id: r.theme_id,
+  theme_title: r.theme_title,
+  image_url: r.image_url || r.front_image_url,
+  front_image_url: r.front_image_url,
+  back_image_url: r.back_image_url,
+  merchant_name: r.merchant_name,
+  type: r.type,
+  items_count: itemsCounts[r.id] || 0,
+  from_name: r.sender_name || "You",
+  message: r.message,
+  status: mapGiftStatus(r.status),
+  created_at: r.created_at,
+  expires_at: r.expires_at,
+  redeemed_at: r.redeemed_at,
+  amount_aed: Number(r.amount_aed),
+}));
 
     res.json({ ok: true, data });
   } catch (err) {
