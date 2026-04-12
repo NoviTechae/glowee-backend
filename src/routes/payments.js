@@ -448,7 +448,7 @@ router.get('/ziina/booking/success', async (req, res) => {
     }
 
     return res.redirect(
-      `${process.env.APP_URL}/payment/success?booking_id=${encodeURIComponent(bookingId)}`
+  `/payments/ziina/booking/done?booking_id=${encodeURIComponent(bookingId)}&payment_intent_id=${paymentIntentId}`
     );
   } catch (error) {
     console.error('Ziina booking success redirect error:', error);
@@ -503,6 +503,51 @@ router.get('/ziina/booking/cancel', async (req, res) => {
     console.error('Ziina booking cancel redirect error:', error);
     return res.status(500).send('Server error');
   }
+});
+
+router.get('/ziina/booking/done', async (req, res) => {
+  const bookingId = req.query.booking_id || '';
+
+  return res.send(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Payment Success</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            background: #f8f5f2;
+            color: #111;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            text-align: center;
+            padding: 24px;
+          }
+          .box {
+            max-width: 420px;
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+          }
+          h1 { margin: 0 0 12px; font-size: 28px; }
+          p { margin: 0 0 10px; color: #555; }
+        </style>
+      </head>
+      <body>
+        <div class="box">
+          <h1>Payment successful</h1>
+          <p>Your booking has been confirmed.</p>
+          <p>Booking ID: ${bookingId || "-"}</p>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 router.get('/ziina/gift/success', async (req, res) => {
