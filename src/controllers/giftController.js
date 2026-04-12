@@ -56,24 +56,24 @@ exports.getReceivedCards = async (req, res, next) => {
       });
     }
 
-const data = rows.map((r) => ({
-  id: r.id,
-  theme_id: r.theme_id,
-  theme_title: r.theme_title,
-  image_url: r.image_url || r.front_image_url,
-  front_image_url: r.front_image_url,
-  back_image_url: r.back_image_url,
-  merchant_name: r.merchant_name,
-  type: r.type,
-  items_count: itemsCounts[r.id] || 0,
-  from_name: r.sender_name,
-  message: r.message,
-  status: mapGiftStatus(r.status),
-  created_at: r.created_at,
-  expires_at: r.expires_at,
-  redeemed_at: r.redeemed_at,
-  amount_aed: Number(r.amount_aed),
-}));
+    const data = rows.map((r) => ({
+      id: r.id,
+      theme_id: r.theme_id,
+      theme_title: r.theme_title,
+      image_url: r.image_url || r.front_image_url,
+      front_image_url: r.front_image_url,
+      back_image_url: r.back_image_url,
+      merchant_name: r.merchant_name,
+      type: r.type,
+      items_count: itemsCounts[r.id] || 0,
+      from_name: r.sender_name,
+      message: r.message,
+      status: mapGiftStatus(r.status),
+      created_at: r.created_at,
+      expires_at: r.expires_at,
+      redeemed_at: r.redeemed_at,
+      amount_aed: Number(r.amount_aed),
+    }));
 
     res.json({ ok: true, data });
   } catch (err) {
@@ -215,24 +215,24 @@ exports.getSentGifts = async (req, res, next) => {
       });
     }
 
-const data = rows.map((r) => ({
-  id: r.id,
-  theme_id: r.theme_id,
-  theme_title: r.theme_title,
-  image_url: r.image_url || r.front_image_url,
-  front_image_url: r.front_image_url,
-  back_image_url: r.back_image_url,
-  merchant_name: r.merchant_name,
-  type: r.type,
-  items_count: itemsCounts[r.id] || 0,
-  from_name: r.sender_name || "You",
-  message: r.message,
-  status: mapGiftStatus(r.status),
-  created_at: r.created_at,
-  expires_at: r.expires_at,
-  redeemed_at: r.redeemed_at,
-  amount_aed: Number(r.amount_aed),
-}));
+    const data = rows.map((r) => ({
+      id: r.id,
+      theme_id: r.theme_id,
+      theme_title: r.theme_title,
+      image_url: r.image_url || r.front_image_url,
+      front_image_url: r.front_image_url,
+      back_image_url: r.back_image_url,
+      merchant_name: r.merchant_name,
+      type: r.type,
+      items_count: itemsCounts[r.id] || 0,
+      from_name: r.sender_name || "You",
+      message: r.message,
+      status: mapGiftStatus(r.status),
+      created_at: r.created_at,
+      expires_at: r.expires_at,
+      redeemed_at: r.redeemed_at,
+      amount_aed: Number(r.amount_aed),
+    }));
 
     res.json({ ok: true, data });
   } catch (err) {
@@ -281,52 +281,54 @@ exports.getGiftById = async (req, res, next) => {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-const items = await knex("gift_items as gi")
-  .leftJoin("service_availability as sa", "sa.id", "gi.service_availability_id")
-  .where("gi.gift_id", id)
-  .select([
-    "gi.id",
-    "gi.service_availability_id",
-    "gi.service_name",
-    "gi.qty",
-    "gi.unit_price_aed",
-    "gi.line_total_aed",
-    "gi.duration_mins",
-    "sa.mode as booking_mode",
-  ]);
+    const items = await knex("gift_items as gi")
+      .leftJoin("service_availability as sa", "sa.id", "gi.service_availability_id")
+      .where("gi.gift_id", id)
+      .select([
+        "gi.id",
+        "gi.service_availability_id",
+        "gi.service_name",
+        "gi.qty",
+        "gi.unit_price_aed",
+        "gi.line_total_aed",
+        "gi.duration_mins",
+        "sa.mode as booking_mode",
+        "sa.branch_id",
+      ]);
 
     res.json({
       ok: true,
-data: {
-  id: row.id,
-  theme_id: row.theme_id,
-  theme_title: row.theme_title,
-  image_url: row.image_url || row.front_image_url,
-  front_image_url: row.front_image_url,
-  back_image_url: row.back_image_url,
-  merchant_name: row.merchant_name,
-  type: row.type,
-  booking_mode: items[0]?.booking_mode || null,
-  items_count: items.length,
-  items: items.map((it) => ({
-    id: it.id,
-    service_availability_id: it.service_availability_id,
-    service_name: it.service_name,
-    qty: Number(it.qty),
-    unit_price_aed: Number(it.unit_price_aed),
-    line_total_aed: Number(it.line_total_aed),
-    duration_mins: Number(it.duration_mins),
-    booking_mode: it.booking_mode || null,
-  })),
-  from_name: row.sender_name,
-  message: row.message,
-  status: mapGiftStatus(row.status),
-  created_at: row.created_at,
-  expires_at: row.expires_at,
-  redeemed_at: row.redeemed_at,
-  amount_aed: Number(row.amount_aed),
-  code: row.code,
-},
+      data: {
+        id: row.id,
+        theme_id: row.theme_id,
+        theme_title: row.theme_title,
+        image_url: row.image_url || row.front_image_url,
+        front_image_url: row.front_image_url,
+        back_image_url: row.back_image_url,
+        merchant_name: row.merchant_name,
+        type: row.type,
+        booking_mode: items[0]?.booking_mode || null,
+        items_count: items.length,
+        items: items.map((it) => ({
+          id: it.id,
+          service_availability_id: it.service_availability_id,
+          service_name: it.service_name,
+          qty: Number(it.qty),
+          unit_price_aed: Number(it.unit_price_aed),
+          line_total_aed: Number(it.line_total_aed),
+          duration_mins: Number(it.duration_mins),
+          booking_mode: it.booking_mode || null,
+          branch_id: it.branch_id || null,
+        })),
+        from_name: row.sender_name,
+        message: row.message,
+        status: mapGiftStatus(row.status),
+        created_at: row.created_at,
+        expires_at: row.expires_at,
+        redeemed_at: row.redeemed_at,
+        amount_aed: Number(row.amount_aed),
+        code: row.code,
+      },
     });
   } catch (err) {
     next(err);
