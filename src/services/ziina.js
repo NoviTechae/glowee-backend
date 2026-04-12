@@ -351,6 +351,8 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       })
       .first();
 
+    console.log("ZIINA SUCCESS transaction =>", transaction);
+
     if (!transaction) {
       await trx.rollback();
       return {
@@ -364,6 +366,10 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       return {
         ok: true,
         already_processed: true,
+        transaction_id: transaction.id,
+        booking_id: transaction.booking_id || null,
+        gift_id: transaction.gift_id || null,
+        amount: Number(transaction.amount_aed || 0),
       };
     }
 
@@ -431,12 +437,20 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
     // BOOKING PAYMENT
     // ========================================
     if (transaction.type === "booking_payment" && transaction.booking_id) {
+      console.log("UPDATING BOOKING TO CONFIRMED =>", transaction.booking_id);
+
       await trx("bookings")
         .where({ id: transaction.booking_id })
         .update({
           status: "confirmed",
           updated_at: trx.fn.now(),
         });
+
+      const updatedBooking = await trx("bookings")
+        .where({ id: transaction.booking_id })
+        .first();
+
+      console.log("UPDATED BOOKING =>", updatedBooking);
 
       const giftId = existingMetadata?.gift_id || null;
 
@@ -446,6 +460,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           .update({
             status: "redeemed",
             redeemed_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
           });
       }
     }
@@ -463,6 +478,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           .where({ id: transaction.gift_id })
           .update({
             status: "active",
+            updated_at: trx.fn.now(),
           });
 
         const metadata =
@@ -476,20 +492,11 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           gift.sender_name ||
           "Someone special";
 
-        const merchantName =
-          metadata.merchant_name || null;
-
-        const themeEmoji =
-          metadata.theme_emoji || "🎁";
-
-        const giftType =
-          gift.salon_id ? "service" : "wallet";
-
-        const recipientPhone =
-          metadata.recipient_phone || gift.recipient_phone;
-
-        const giftCode =
-          metadata.gift_code || gift.code;
+        const merchantName = metadata.merchant_name || null;
+        const themeEmoji = metadata.theme_emoji || "🎁";
+        const giftType = gift.salon_id ? "service" : "wallet";
+        const recipientPhone = metadata.recipient_phone || gift.recipient_phone;
+        const giftCode = metadata.gift_code || gift.code;
 
         await trx.commit();
 
@@ -510,7 +517,9 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
         return {
           ok: true,
           transaction_id: transaction.id,
-          amount: Number(transaction.amount_aed),
+          booking_id: transaction.booking_id || null,
+          gift_id: transaction.gift_id || null,
+          amount: Number(transaction.amount_aed || 0),
         };
       }
     }
@@ -520,7 +529,9 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
     return {
       ok: true,
       transaction_id: transaction.id,
-      amount: Number(transaction.amount_aed),
+      booking_id: transaction.booking_id || null,
+      gift_id: transaction.gift_id || null,
+      amount: Number(transaction.amount_aed || 0),
     };
   } catch (error) {
     await trx.rollback();
