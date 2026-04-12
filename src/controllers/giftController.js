@@ -118,7 +118,7 @@ exports.getAvailableGifts = async (req, res, next) => {
           "service_name",
           "qty",
           "unit_price_aed",
-          // "service_image_url", // إذا ضفتيه لاحقاً
+          //"service_image_url", // إذا ضفتيه لاحقاً
         ]);
 
       items.forEach((item) => {
@@ -281,17 +281,19 @@ exports.getGiftById = async (req, res, next) => {
       return res.status(403).json({ error: "Not allowed" });
     }
 
-    const items = await knex("gift_items")
-      .where({ gift_id: id })
-      .select([
-        "id",
-        "service_availability_id",
-        "service_name",
-        "qty",
-        "unit_price_aed",
-        "line_total_aed",
-        "duration_mins",
-      ]);
+const items = await knex("gift_items as gi")
+  .leftJoin("service_availability as sa", "sa.id", "gi.service_availability_id")
+  .where("gi.gift_id", id)
+  .select([
+    "gi.id",
+    "gi.service_availability_id",
+    "gi.service_name",
+    "gi.qty",
+    "gi.unit_price_aed",
+    "gi.line_total_aed",
+    "gi.duration_mins",
+    "sa.mode as booking_mode",
+  ]);
 
     res.json({
       ok: true,
@@ -304,6 +306,7 @@ data: {
   back_image_url: row.back_image_url,
   merchant_name: row.merchant_name,
   type: row.type,
+  booking_mode: items[0]?.booking_mode || null,
   items_count: items.length,
   items: items.map((it) => ({
     id: it.id,
@@ -313,6 +316,7 @@ data: {
     unit_price_aed: Number(it.unit_price_aed),
     line_total_aed: Number(it.line_total_aed),
     duration_mins: Number(it.duration_mins),
+    booking_mode: it.booking_mode || null,
   })),
   from_name: row.sender_name,
   message: row.message,

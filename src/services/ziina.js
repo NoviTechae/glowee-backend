@@ -1,30 +1,30 @@
 // src/services/ziina.js
-const axios = require('axios');
-const db = require('../db/knex');
-const crypto = require('crypto');
+const axios = require("axios");
+const db = require("../db/knex");
+const crypto = require("crypto");
 
-const ZIINA_API_URL = 'https://api-v2.ziina.com/api';
-const ZIINA_API_KEY = (process.env.ZIINA_API_KEY || '').trim();
+const ZIINA_API_URL = "https://api-v2.ziina.com/api";
+const ZIINA_API_KEY = (process.env.ZIINA_API_KEY || "").trim();
 
 if (!ZIINA_API_KEY) {
-  console.warn('ZIINA_API_KEY is not set');
+  console.warn("ZIINA_API_KEY is not set");
 }
 
 console.log(
-  'ZIINA KEY SHA256:',
-  crypto.createHash('sha256').update(ZIINA_API_KEY).digest('hex')
+  "ZIINA KEY SHA256:",
+  crypto.createHash("sha256").update(ZIINA_API_KEY).digest("hex")
 );
-console.log('ZIINA KEY EXISTS:', !!ZIINA_API_KEY);
-console.log('ZIINA KEY PREFIX:', ZIINA_API_KEY.slice(0, 12));
-console.log('ZIINA KEY SUFFIX:', ZIINA_API_KEY.slice(-8));
-console.log('ZIINA KEY LENGTH:', ZIINA_API_KEY.length);
-console.log('ZIINA API URL:', ZIINA_API_URL);
+console.log("ZIINA KEY EXISTS:", !!ZIINA_API_KEY);
+console.log("ZIINA KEY PREFIX:", ZIINA_API_KEY.slice(0, 12));
+console.log("ZIINA KEY SUFFIX:", ZIINA_API_KEY.slice(-8));
+console.log("ZIINA KEY LENGTH:", ZIINA_API_KEY.length);
+console.log("ZIINA API URL:", ZIINA_API_URL);
 
 const ziinaClient = axios.create({
   baseURL: ZIINA_API_URL,
   headers: {
     Authorization: `Bearer ${ZIINA_API_KEY}`,
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   },
 });
 
@@ -61,62 +61,62 @@ async function createWalletTopupPaymentIntent(
 ) {
   try {
     const payload = {
-      amount: Math.round(amountAed * 100),
-      currency_code: 'AED',
-      message: 'Glowee Top-up',
+      amount: Math.round(Number(amountAed) * 100),
+      currency_code: "AED",
+      message: "Glowee Top-up",
       ...buildWalletUrls(),
-test: true,
+      test: true,
     };
 
-    console.log('Creating Ziina wallet payment intent...', {
+    console.log("Creating Ziina wallet payment intent...", {
       keyPrefix: ZIINA_API_KEY.slice(0, 12),
       keySuffix: ZIINA_API_KEY.slice(-8),
       amountAed,
     });
-    console.log('ZIINA PAYLOAD:', payload);
+    console.log("ZIINA PAYLOAD:", payload);
 
-    const response = await ziinaClient.post('/payment_intent', payload);
+    const response = await ziinaClient.post("/payment_intent", payload);
     const paymentIntent = response.data;
 
     if (!paymentIntent?.id || !paymentIntent?.redirect_url) {
       return {
         ok: false,
-        error: 'Ziina did not return a valid payment intent',
+        error: "Ziina did not return a valid payment intent",
       };
     }
 
-    const [transaction] = await db('payment_transactions')
+    const [transaction] = await db("payment_transactions")
       .insert({
         user_id: userId,
-        provider: 'ziina',
-        type: 'wallet_topup',
-        status: 'pending',
-        amount_aed: amountAed,
+        provider: "ziina",
+        type: "wallet_topup",
+        status: "pending",
+        amount_aed: Number(amountAed),
         fee_aed: 0,
-        net_amount_aed: amountAed,
+        net_amount_aed: Number(amountAed),
         provider_payment_id: paymentIntent.id,
         metadata: {
           phone: userPhone || null,
           email: userEmail || null,
           name: userName || null,
           payment_url: paymentIntent.redirect_url,
-          ziina_status: paymentIntent.status || 'pending',
+          ziina_status: paymentIntent.status || "pending",
         },
         created_at: db.fn.now(),
         updated_at: db.fn.now(),
       })
-      .returning('*');
+      .returning("*");
 
     return {
       ok: true,
       payment_intent_id: paymentIntent.id,
       transaction_id: transaction.id,
       payment_url: paymentIntent.redirect_url,
-      amount: amountAed,
-      status: paymentIntent.status || 'pending',
+      amount: Number(amountAed),
+      status: paymentIntent.status || "pending",
     };
   } catch (error) {
-    console.error('Ziina create wallet payment intent error:', {
+    console.error("Ziina create wallet payment intent error:", {
       status: error.response?.status,
       data: error.response?.data,
       message: error.message,
@@ -132,6 +132,13 @@ test: true,
 
 /**
  * Create payment intent for booking payment
+ * metadata ممكن يحتوي:
+ * {
+ *   gift_id,
+ *   booking_mode,
+ *   salon_id,
+ *   source: "gift_redeem"
+ * }
  */
 async function createBookingPaymentIntent(
   userId,
@@ -139,66 +146,69 @@ async function createBookingPaymentIntent(
   amountAed,
   userPhone,
   userName,
-  userEmail
+  userEmail,
+  metadata = {}
 ) {
   try {
     const payload = {
-      amount: Math.round(amountAed * 100),
-      currency_code: 'AED',
-      message: `Glowee · Beauty Booking`,
+      amount: Math.round(Number(amountAed) * 100),
+      currency_code: "AED",
+      message: "Glowee · Beauty Booking",
       ...buildBookingUrls(),
-test: true,
+      test: true,
     };
 
-    console.log('Creating Ziina booking payment intent...', {
+    console.log("Creating Ziina booking payment intent...", {
       bookingId,
       amountAed,
+      metadata,
     });
-    console.log('ZIINA BOOKING PAYLOAD:', payload);
+    console.log("ZIINA BOOKING PAYLOAD:", payload);
 
-    const response = await ziinaClient.post('/payment_intent', payload);
+    const response = await ziinaClient.post("/payment_intent", payload);
     const pi = response.data;
 
     if (!pi?.id || !pi?.redirect_url) {
       return {
         ok: false,
-        error: 'Ziina did not return a valid booking payment intent',
+        error: "Ziina did not return a valid booking payment intent",
       };
     }
 
-    const [transaction] = await db('payment_transactions')
+    const [transaction] = await db("payment_transactions")
       .insert({
         user_id: userId,
         booking_id: bookingId,
-        provider: 'ziina',
-        type: 'booking_payment',
-        status: 'pending',
-        amount_aed: amountAed,
+        provider: "ziina",
+        type: "booking_payment",
+        status: "pending",
+        amount_aed: Number(amountAed),
         fee_aed: 0,
-        net_amount_aed: amountAed,
+        net_amount_aed: Number(amountAed),
         provider_payment_id: pi.id,
         metadata: {
           phone: userPhone || null,
           email: userEmail || null,
           name: userName || null,
           payment_url: pi.redirect_url,
-          ziina_status: pi.status || 'pending',
+          ziina_status: pi.status || "pending",
+          ...metadata,
         },
         created_at: db.fn.now(),
         updated_at: db.fn.now(),
       })
-      .returning('*');
+      .returning("*");
 
     return {
       ok: true,
       payment_url: pi.redirect_url,
       payment_intent_id: pi.id,
       transaction_id: transaction.id,
-      amount: amountAed,
-      status: pi.status || 'pending',
+      amount: Number(amountAed),
+      status: pi.status || "pending",
     };
   } catch (error) {
-    console.error('Ziina create booking payment intent error:', {
+    console.error("Ziina create booking payment intent error:", {
       status: error.response?.status,
       data: error.response?.data,
       message: error.message,
@@ -226,38 +236,39 @@ async function createGiftPaymentIntent(
 ) {
   try {
     const payload = {
-      amount: Math.round(amountAed * 100),
-      currency_code: 'AED',
-      message: 'Glowee Gift Payment',
+      amount: Math.round(Number(amountAed) * 100),
+      currency_code: "AED",
+      message: "Glowee Gift Payment",
       ...buildGiftUrls(),
-test: true,
+      test: true,
     };
 
-    console.log('Creating Ziina gift payment intent...', {
+    console.log("Creating Ziina gift payment intent...", {
       amountAed,
       recipientPhone,
+      metadata,
     });
-    console.log('ZIINA GIFT PAYLOAD:', payload);
+    console.log("ZIINA GIFT PAYLOAD:", payload);
 
-    const response = await ziinaClient.post('/payment_intent', payload);
+    const response = await ziinaClient.post("/payment_intent", payload);
     const pi = response.data;
 
     if (!pi?.id || !pi?.redirect_url) {
       return {
         ok: false,
-        error: 'Ziina did not return a valid gift payment intent',
+        error: "Ziina did not return a valid gift payment intent",
       };
     }
 
-    const [transaction] = await db('payment_transactions')
+    const [transaction] = await db("payment_transactions")
       .insert({
         user_id: userId,
-        provider: 'ziina',
-        type: 'gift_purchase',
-        status: 'pending',
-        amount_aed: amountAed,
+        provider: "ziina",
+        type: "gift_purchase",
+        status: "pending",
+        amount_aed: Number(amountAed),
         fee_aed: 0,
-        net_amount_aed: amountAed,
+        net_amount_aed: Number(amountAed),
         provider_payment_id: pi.id,
         gift_id: metadata.gift_id || null,
         metadata: {
@@ -266,24 +277,24 @@ test: true,
           name: userName || null,
           recipient_phone: recipientPhone || null,
           payment_url: pi.redirect_url,
-          ziina_status: pi.status || 'pending',
+          ziina_status: pi.status || "pending",
           ...metadata,
         },
         created_at: db.fn.now(),
         updated_at: db.fn.now(),
       })
-      .returning('*');
+      .returning("*");
 
     return {
       ok: true,
       payment_url: pi.redirect_url,
       payment_intent_id: pi.id,
       transaction_id: transaction.id,
-      amount: amountAed,
-      status: pi.status || 'pending',
+      amount: Number(amountAed),
+      status: pi.status || "pending",
     };
   } catch (error) {
-    console.error('Ziina create gift payment intent error:', {
+    console.error("Ziina create gift payment intent error:", {
       status: error.response?.status,
       data: error.response?.data,
       message: error.message,
@@ -312,7 +323,7 @@ async function getPaymentIntentStatus(paymentIntentId) {
       raw: paymentIntent,
     };
   } catch (error) {
-    console.error('Ziina get payment intent status error:', {
+    console.error("Ziina get payment intent status error:", {
       status: error.response?.status,
       data: error.response?.data,
       message: error.message,
@@ -332,10 +343,10 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
   const trx = await db.transaction();
 
   try {
-    const transaction = await trx('payment_transactions')
+    const transaction = await trx("payment_transactions")
       .where({
         provider_payment_id: paymentIntentId,
-        provider: 'ziina',
+        provider: "ziina",
       })
       .first();
 
@@ -343,11 +354,11 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       await trx.rollback();
       return {
         ok: false,
-        error: 'Transaction not found',
+        error: "Transaction not found",
       };
     }
 
-    if (transaction.status === 'succeeded') {
+    if (transaction.status === "succeeded") {
       await trx.commit();
       return {
         ok: true,
@@ -355,71 +366,98 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       };
     }
 
-    let paymentMethodType = 'card';
+    let paymentMethodType = "card";
     let cardLast4 = null;
     let cardBrand = null;
 
-    const source = paymentIntentData?.payment_method || paymentIntentData?.source || null;
+    const source =
+      paymentIntentData?.payment_method ||
+      paymentIntentData?.source ||
+      null;
 
     if (source) {
       cardLast4 = source.last4 || source.last_four || null;
       cardBrand = source.brand || source.scheme || null;
 
-      if (String(cardBrand || '').toLowerCase().includes('apple')) {
-        paymentMethodType = 'apple_pay';
+      if (String(cardBrand || "").toLowerCase().includes("apple")) {
+        paymentMethodType = "apple_pay";
       }
     }
 
-    await trx('payment_transactions')
+    const existingMetadata =
+      typeof transaction.metadata === "object" && transaction.metadata !== null
+        ? transaction.metadata
+        : {};
+
+    await trx("payment_transactions")
       .where({ id: transaction.id })
       .update({
-        status: 'succeeded',
+        status: "succeeded",
         succeeded_at: trx.fn.now(),
         payment_method_type: paymentMethodType,
         card_last4: cardLast4,
         card_brand: cardBrand,
         metadata: {
-          ...(typeof transaction.metadata === 'object' && transaction.metadata !== null
-            ? transaction.metadata
-            : {}),
-          ziina_status: paymentIntentData?.status || 'succeeded',
+          ...existingMetadata,
+          ziina_status: paymentIntentData?.status || "succeeded",
           ziina_payment_intent: paymentIntentData,
         },
         updated_at: trx.fn.now(),
       });
 
-    if (transaction.type === 'wallet_topup') {
-      const { addWalletBalance } = require('../controllers/walletController');
+    // ========================================
+    // WALLET TOPUP
+    // ========================================
+    if (transaction.type === "wallet_topup") {
+      const { addWalletBalance } = require("../controllers/walletController");
+      const { addPoints } = require("../controllers/rewardController");
 
       await addWalletBalance(
         transaction.user_id,
         Number(transaction.net_amount_aed),
-        `Wallet topup via Ziina${cardBrand ? ` (${cardBrand})` : ''}`,
+        `Wallet topup via Ziina${cardBrand ? ` (${cardBrand})` : ""}`,
         transaction.id,
-        'topup',
+        "topup",
         trx
       );
 
       if (Number(transaction.net_amount_aed) >= 100) {
-        const { addPoints } = require('../controllers/rewardController');
-        await addPoints(transaction.user_id, 20, 'wallet_topup', transaction.id, trx);
+        await addPoints(transaction.user_id, 20, "wallet_topup", transaction.id, trx);
       }
     }
 
-    if (transaction.type === 'booking_payment' && transaction.booking_id) {
-      await trx('bookings')
+    // ========================================
+    // BOOKING PAYMENT
+    // ========================================
+    if (transaction.type === "booking_payment" && transaction.booking_id) {
+      await trx("bookings")
         .where({ id: transaction.booking_id })
         .update({
-          status: 'confirmed',
+          status: "confirmed",
           updated_at: trx.fn.now(),
         });
+
+      const giftId = existingMetadata?.gift_id || null;
+
+      if (giftId) {
+        await trx("gifts")
+          .where({ id: giftId })
+          .update({
+            status: "redeemed",
+            redeemed_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
+          });
+      }
     }
 
-    if (transaction.type === 'gift_purchase' && transaction.gift_id) {
-      await trx('gifts')
+    // ========================================
+    // GIFT PURCHASE
+    // ========================================
+    if (transaction.type === "gift_purchase" && transaction.gift_id) {
+      await trx("gifts")
         .where({ id: transaction.gift_id })
         .update({
-          status: 'active',
+          status: "active",
           updated_at: trx.fn.now(),
         });
     }
@@ -433,7 +471,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
     };
   } catch (error) {
     await trx.rollback();
-    console.error('Ziina handle payment success error:', error);
+    console.error("Ziina handle payment success error:", error);
     return {
       ok: false,
       error: error.message,
@@ -447,4 +485,4 @@ module.exports = {
   createGiftPaymentIntent,
   getPaymentIntentStatus,
   handlePaymentIntentSuccess,
-};  
+};
