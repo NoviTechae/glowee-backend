@@ -1,6 +1,8 @@
+// src/controllers/bookingController.js
 const knex = require("../db/knex");
 const { addPoints } = require("./rewardController");
 const { handleMonthlyStreak } = require("./streakController");
+const { awardStampForCompletedBooking } = require("../services/stampService");
 
 function calcBookingPoints(totalAed) {
   const unit = 10;
@@ -25,16 +27,23 @@ async function completeBooking(bookingId) {
 
     const basePoints = calcBookingPoints(booking.total_aed);
 
+    // ✅ 1. حوّل الحجز إلى completed
     await trx("bookings").where({ id: bookingId }).update({
       status: "completed",
       points_earned: basePoints,
       updated_at: trx.fn.now(),
     });
 
+    // 🔥🔥 2. هنا نحسب الستامب
+    const stampResult = await awardStampForCompletedBooking(bookingId, trx);
+    console.log("STAMP RESULT =>", stampResult);
+
+    // ✅ 3. points
     if (basePoints > 0) {
       await addPoints(booking.user_id, basePoints, "booking_completed", bookingId, trx);
     }
 
+    // ✅ 4. streak
     const { bonusMultiplier } = await handleMonthlyStreak(booking.user_id, trx);
     let bonusPoints = 0;
 
