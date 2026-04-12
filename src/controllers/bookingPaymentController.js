@@ -1,7 +1,7 @@
 // src/controllers/bookingPaymentController.js
 
 const db = require('../db/knex');
-const ziinaService = require('../services/ziina');
+const tapService = require('../services/tap');
 const { spendWalletBalance, addWalletBalance } = require('./walletController');
 
 /**
@@ -12,18 +12,21 @@ async function calculatePaymentSplit(userId, totalAmount) {
   const walletBalance = wallet ? Number(wallet.balance_aed) : 0;
 
   if (walletBalance >= totalAmount) {
+    // Enough in wallet - no card needed
     return {
       wallet_amount: totalAmount,
       card_amount: 0,
       requires_card: false,
     };
   } else if (walletBalance > 0) {
+    // Partial wallet, rest via card
     return {
       wallet_amount: walletBalance,
       card_amount: totalAmount - walletBalance,
       requires_card: true,
     };
   } else {
+    // No wallet balance - all via card
     return {
       wallet_amount: 0,
       card_amount: totalAmount,
@@ -34,11 +37,12 @@ async function calculatePaymentSplit(userId, totalAmount) {
 
 /**
  * POST /bookings/:id/pay
- *
+ * Pay for a booking
+ * 
  * Body:
  * {
  *   "payment_method": "wallet" | "card" | "split",
- *   "use_wallet": true/false
+ *   "use_wallet": true/false (for split payment)
  * }
  */
 const payForBooking = async (req, res, next) => {
@@ -49,6 +53,7 @@ const payForBooking = async (req, res, next) => {
     const { payment_method, use_wallet } = req.body;
     const userId = req.user.sub;
 
+    // Get booking
     const booking = await trx('bookings')
       .where({ id: bookingId, user_id: userId })
       .first();
@@ -64,12 +69,9 @@ const payForBooking = async (req, res, next) => {
     }
 
     const totalAmount = Number(booking.total_aed);
-    const user = await trx('users').where({ id: userId }).first();
 
-    if (!user) {
-      await trx.rollback();
-      return res.status(404).json({ error: 'User not found' });
-    }
+    // Get user details
+    const user = await trx('users').where({ id: userId }).first();
 
     // OPTION 1: WALLET ONLY
     if (payment_method === 'wallet') {
@@ -86,6 +88,7 @@ const payForBooking = async (req, res, next) => {
         });
       }
 
+      // Deduct from wallet
       await spendWalletBalance(
         userId,
         totalAmount,
@@ -95,6 +98,7 @@ const payForBooking = async (req, res, next) => {
         trx
       );
 
+      // Update booking
       await trx('bookings')
         .where({ id: bookingId })
         .update({
@@ -102,19 +106,18 @@ const payForBooking = async (req, res, next) => {
           updated_at: trx.fn.now(),
         });
 
+      // Record payment
       await trx('payment_transactions').insert({
         user_id: userId,
         provider: 'wallet',
         type: 'booking_payment',
         status: 'succeeded',
         amount_aed: totalAmount,
-        fee_aed: 0,
         net_amount_aed: totalAmount,
         booking_id: bookingId,
         payment_method_type: 'wallet',
         succeeded_at: trx.fn.now(),
         created_at: trx.fn.now(),
-        updated_at: trx.fn.now(),
       });
 
       await trx.commit();
@@ -128,11 +131,11 @@ const payForBooking = async (req, res, next) => {
       });
     }
 
-    // OPTION 2: CARD ONLY via Ziina
+    // OPTION 2: CARD ONLY
     if (payment_method === 'card') {
-      await trx.commit(); // release DB transaction before API call
+      await trx.commit(); // Release transaction before Tap API call
 
-      const ziinaResult = await ziinaService.createBookingPaymentIntent(
+      const tapResult = await tapService.createBookingCharge(
         userId,
         bookingId,
         totalAmount,
@@ -141,10 +144,10 @@ const payForBooking = async (req, res, next) => {
         user.email
       );
 
-      if (!ziinaResult.ok) {
+      if (!tapResult.ok) {
         return res.status(400).json({
-          error: ziinaResult.error,
-          code: ziinaResult.code,
+          error: tapResult.error,
+          code: tapResult.code,
         });
       }
 
@@ -152,15 +155,14 @@ const payForBooking = async (req, res, next) => {
         ok: true,
         booking_id: bookingId,
         payment_method: 'card',
-        provider: 'ziina',
-        payment_url: ziinaResult.payment_url,
-        payment_intent_id: ziinaResult.payment_intent_id,
-        transaction_id: ziinaResult.transaction_id,
+        payment_url: tapResult.payment_url,
+        charge_id: tapResult.charge_id,
+        transaction_id: tapResult.transaction_id,
         amount: totalAmount,
       });
     }
 
-    // OPTION 3: SPLIT PAYMENT (Wallet + Ziina)
+    // OPTION 3: SPLIT PAYMENT (Wallet + Card)
     if (payment_method === 'split' || use_wallet === true) {
       const split = await calculatePaymentSplit(userId, totalAmount);
 
@@ -172,6 +174,7 @@ const payForBooking = async (req, res, next) => {
         });
       }
 
+      // Deduct wallet portion
       await spendWalletBalance(
         userId,
         split.wallet_amount,
@@ -181,53 +184,49 @@ const payForBooking = async (req, res, next) => {
         trx
       );
 
+      // Record wallet payment
       await trx('payment_transactions').insert({
         user_id: userId,
         provider: 'wallet',
         type: 'booking_payment',
         status: 'succeeded',
         amount_aed: split.wallet_amount,
-        fee_aed: 0,
         net_amount_aed: split.wallet_amount,
         booking_id: bookingId,
         payment_method_type: 'wallet',
         succeeded_at: trx.fn.now(),
         metadata: { split_payment: true, wallet_portion: true },
         created_at: trx.fn.now(),
-        updated_at: trx.fn.now(),
       });
 
       await trx.commit();
 
-      const ziinaResult = await ziinaService.createBookingPaymentIntent(
+      // Create Tap charge for remaining amount
+      const tapResult = await tapService.createBookingCharge(
         userId,
         bookingId,
         split.card_amount,
         user.phone,
         user.name,
-        user.email
+        user.email,
+        { split_payment: true, wallet_used: split.wallet_amount }
       );
 
-      if (!ziinaResult.ok) {
-        // refund wallet portion if Ziina payment intent creation fails
+      if (!tapResult.ok) {
+        // Rollback wallet deduction
         const refundTrx = await db.transaction();
-        try {
-          await addWalletBalance(
-            userId,
-            split.wallet_amount,
-            'Refund - Split payment failed',
-            bookingId,
-            'refund',
-            refundTrx
-          );
-          await refundTrx.commit();
-        } catch (refundError) {
-          await refundTrx.rollback();
-          console.error('Split payment wallet refund failed:', refundError);
-        }
+        await addWalletBalance(
+          userId,
+          split.wallet_amount,
+          `Refund - Split payment failed`,
+          bookingId,
+          'refund',
+          refundTrx
+        );
+        await refundTrx.commit();
 
         return res.status(400).json({
-          error: ziinaResult.error,
+          error: tapResult.error,
           wallet_refunded: true,
         });
       }
@@ -236,12 +235,11 @@ const payForBooking = async (req, res, next) => {
         ok: true,
         booking_id: bookingId,
         payment_method: 'split',
-        provider: 'ziina',
         wallet_amount: split.wallet_amount,
         card_amount: split.card_amount,
-        payment_url: ziinaResult.payment_url,
-        payment_intent_id: ziinaResult.payment_intent_id,
-        transaction_id: ziinaResult.transaction_id,
+        payment_url: tapResult.payment_url,
+        charge_id: tapResult.charge_id,
+        transaction_id: tapResult.transaction_id,
       });
     }
 
@@ -258,6 +256,7 @@ const payForBooking = async (req, res, next) => {
 
 /**
  * GET /bookings/:id/payment-options
+ * Get available payment options for a booking
  */
 const getPaymentOptions = async (req, res, next) => {
   try {
@@ -281,6 +280,7 @@ const getPaymentOptions = async (req, res, next) => {
       payment_methods: [],
     };
 
+    // Option 1: Full wallet payment
     if (split.wallet_amount >= totalAmount) {
       options.payment_methods.push({
         method: 'wallet',
@@ -290,15 +290,16 @@ const getPaymentOptions = async (req, res, next) => {
       });
     }
 
+    // Option 2: Card payment
     options.payment_methods.push({
       method: 'card',
       label: 'Pay with Card/Apple Pay',
       amount: totalAmount,
       available: true,
-      provider: 'ziina',
-      providers: ['visa', 'mastercard', 'apple_pay', 'google_pay'],
+      providers: ['visa', 'mastercard', 'mada', 'apple_pay', 'google_pay'],
     });
 
+    // Option 3: Split payment
     if (split.wallet_amount > 0 && split.wallet_amount < totalAmount) {
       options.payment_methods.push({
         method: 'split',
@@ -306,11 +307,11 @@ const getPaymentOptions = async (req, res, next) => {
         wallet_amount: split.wallet_amount,
         card_amount: split.card_amount,
         available: true,
-        provider: 'ziina',
         description: `Pay AED ${split.wallet_amount} from wallet + AED ${split.card_amount} with card`,
       });
     }
 
+    // If insufficient wallet, suggest topup
     if (split.wallet_amount < totalAmount) {
       options.suggestions = {
         topup_needed: totalAmount - split.wallet_amount,
