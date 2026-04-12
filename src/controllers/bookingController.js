@@ -102,14 +102,19 @@ async function confirmGiftBooking(req, res, next) {
       return res.status(400).json({ error: "Gift has expired" });
     }
 
-    await trx("bookings").where({ id: bookingId }).update({
-      status: "confirmed",
-    });
+    await trx("bookings")
+      .where({ id: bookingId })
+      .update({
+        status: "confirmed",
+        updated_at: trx.fn.now(),
+      });
 
-    await trx("gifts").where({ id: gift_id }).update({
-      status: "redeemed",
-      redeemed_at: trx.fn.now(),
-    });
+    await trx("gifts")
+      .where({ id: gift_id })
+      .update({
+        status: "redeemed",
+        redeemed_at: trx.fn.now(),
+      });
 
     await trx.commit();
 

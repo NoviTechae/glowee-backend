@@ -2,6 +2,9 @@
 const router = require("express").Router();
 const { z } = require("zod");
 const db = require("../db/knex");
+const authRequired = require("../middleware/authRequired");
+const bookingController = require("../controllers/bookingController");
+
 
 function overlap(qb, start, end) {
   return qb.where("bia.starts_at", "<", end).andWhere("bia.ends_at", ">", start);
@@ -332,5 +335,7 @@ function generateTimeSlots(openTime, closeTime, durationMins) {
   
   return slots;
 }
+
+router.post("/:id/confirm-gift", authRequired, bookingController.confirmGiftBooking);
 
 module.exports = router;
