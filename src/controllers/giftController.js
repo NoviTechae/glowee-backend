@@ -19,7 +19,7 @@ exports.getReceivedCards = async (req, res, next) => {
 
     const rows = await knex("gifts as g")
       .leftJoin("salons as s", "s.id", "g.salon_id")
-      .leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
+      .leftJoin("gift_themes as gt", knex.raw('gt.id::text'), 'g.theme_id')
       .where("g.recipient_phone", userPhone)
       .select([
         "g.id",
@@ -86,7 +86,7 @@ exports.getAvailableGifts = async (req, res, next) => {
 
     const rows = await knex("gifts as g")
       .leftJoin("salons as s", "s.id", "g.salon_id")
-      .leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
+      .leftJoin("gift_themes as gt", knex.raw('gt.id::text'), 'g.theme_id')
       .where("g.recipient_phone", userPhone)
       .andWhere("g.status", "active")
       .andWhere("g.expires_at", ">", knex.fn.now())
@@ -155,7 +155,7 @@ exports.getSentGifts = async (req, res, next) => {
 
     const rows = await knex("gifts as g")
       .leftJoin("salons as s", "s.id", "g.salon_id")
-      .leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
+      .leftJoin("gift_themes as gt", knex.raw('gt.id::text'), 'g.theme_id')
       .where("g.sender_user_id", userId)
       .andWhere("g.status", statusFilter)
       .select([
@@ -224,7 +224,7 @@ exports.getGiftById = async (req, res, next) => {
 
     const row = await knex("gifts as g")
       .leftJoin("salons as s", "s.id", "g.salon_id")
-      .leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
+      .leftJoin("gift_themes as gt", knex.raw('gt.id::text'), 'g.theme_id')
       .where("g.id", id)
       .first([
         "g.id",
