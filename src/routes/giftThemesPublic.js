@@ -6,18 +6,19 @@ const db = require("../db/knex");
 router.get("/themes", async (req, res, next) => {
   try {
     // Only return active themes, sorted by sort_order
-    const themes = await db("gift_themes")
-      .where({ is_active: true })
-      .select([
-        "id",
-        "title",
-        "category",
-        "front_image_url",
-        "back_image_url",
-        "sort_order",
-      ])
-      .orderBy("sort_order", "asc")
-      .orderBy("created_at", "desc");
+const themes = await db("gift_themes")
+  .where({ is_active: true })
+  .select([
+    "id",
+    "title",
+    "category",
+    "front_image_url as image_url",
+    "front_image_url",
+    "back_image_url",
+    "sort_order",
+  ])
+  .orderBy("sort_order", "asc")
+  .orderBy("created_at", "desc");
 
     res.json({ 
       ok: true, 
@@ -37,16 +38,17 @@ router.get("/themes/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const theme = await db("gift_themes")
-      .where({ id, is_active: true })
-      .select([
-        "id",
-        "title",
-        "category",
-        "front_image_url",
-        "back_image_url",
-      ])
-      .first();
+const theme = await db("gift_themes")
+  .where({ id, is_active: true })
+  .select([
+    "id",
+    "title",
+    "category",
+    "front_image_url as image_url",
+    "front_image_url",
+    "back_image_url",
+  ])
+  .first();
 
     if (!theme) {
       return res.status(404).json({ 
