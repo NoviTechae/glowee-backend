@@ -63,7 +63,7 @@ async function createWalletTopupPaymentIntent(
     const payload = {
       amount: Math.round(amountAed * 100),
       currency_code: 'AED',
-      message: 'Glowee Test',
+      message: 'Glowee Top-up',
       ...buildWalletUrls(),
 test: false,
     };
