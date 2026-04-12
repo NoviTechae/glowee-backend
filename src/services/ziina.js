@@ -2,6 +2,7 @@
 const axios = require("axios");
 const db = require("../db/knex");
 const crypto = require("crypto");
+const { sendGiftNotification } = require("./whatsapp");
 
 const ZIINA_API_URL = "https://api-v2.ziina.com/api";
 const ZIINA_API_KEY = (process.env.ZIINA_API_KEY || "").trim();
@@ -445,7 +446,6 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           .update({
             status: "redeemed",
             redeemed_at: trx.fn.now(),
-            updated_at: trx.fn.now(),
           });
       }
     }
@@ -454,12 +454,65 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
     // GIFT PURCHASE
     // ========================================
     if (transaction.type === "gift_purchase" && transaction.gift_id) {
-      await trx("gifts")
+      const gift = await trx("gifts")
         .where({ id: transaction.gift_id })
-        .update({
-          status: "active",
-          updated_at: trx.fn.now(),
+        .first();
+
+      if (gift) {
+        await trx("gifts")
+          .where({ id: transaction.gift_id })
+          .update({
+            status: "active",
+          });
+
+        const metadata =
+          typeof transaction.metadata === "object" && transaction.metadata !== null
+            ? transaction.metadata
+            : {};
+
+        const senderName =
+          metadata.sender_name ||
+          metadata.name ||
+          gift.sender_name ||
+          "Someone special";
+
+        const merchantName =
+          metadata.merchant_name || null;
+
+        const themeEmoji =
+          metadata.theme_emoji || "🎁";
+
+        const giftType =
+          gift.salon_id ? "service" : "wallet";
+
+        const recipientPhone =
+          metadata.recipient_phone || gift.recipient_phone;
+
+        const giftCode =
+          metadata.gift_code || gift.code;
+
+        await trx.commit();
+
+        setImmediate(async () => {
+          try {
+            await sendGiftNotification(recipientPhone, {
+              code: giftCode,
+              senderName,
+              giftType,
+              merchantName,
+              themeEmoji,
+            });
+          } catch (e) {
+            console.error("Gift WhatsApp failed after Ziina success:", e?.message || e);
+          }
         });
+
+        return {
+          ok: true,
+          transaction_id: transaction.id,
+          amount: Number(transaction.amount_aed),
+        };
+      }
     }
 
     await trx.commit();

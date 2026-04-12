@@ -493,8 +493,9 @@ exports.sendGift = async (req, res, next) => {
           await sendGiftNotification(gift.recipient_phone, {
             code: gift.code,
             senderName: finalSenderName || "Someone special",
-            amount: Number(finalAmount).toFixed(2),
-            message: message,
+            giftType: finalSalonId ? "service" : "wallet",
+            merchantName: salonName || null,
+
             themeEmoji:
               finalThemeId === "birthday"
                 ? "🎂"
