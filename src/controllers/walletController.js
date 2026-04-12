@@ -155,10 +155,43 @@ async function getWalletSummary(req, res) {
       refId: t.ref_id ?? t.reference_id ?? null,
     }));
 
+    // 🔥 stamps
+const stampRows = await knex("user_salon_stamp_cards as c")
+  .join("salons as s", "s.id", "c.salon_id")
+  .leftJoin("salon_stamp_settings as st", function () {
+    this.on("st.salon_id", "c.salon_id").andOn("st.is_active", knex.raw("true"));
+  })
+  .where("c.user_id", userId)
+  .select([
+    "c.salon_id",
+    "c.current_stamps",
+    "c.available_rewards",
+    "s.name as salon_name",
+    "s.logo_url",
+    "s.city",
+    "s.area",
+    "st.stamps_required",
+    "st.reward_text",
+    "st.stamp_images",
+  ]);
+
+const stamps = stampRows.map((r) => ({
+  id: r.salon_id,
+  salonName: r.salon_name,
+  area: r.area,
+  city: r.city,
+  logo: r.logo_url,
+  collected: Number(r.current_stamps || 0),
+  total: Number(r.stamps_required || 6),
+  rewardText: r.reward_text || "Reward",
+  availableRewards: Number(r.available_rewards || 0),
+  stampImages: Array.isArray(r.stamp_images) ? r.stamp_images : [],
+}));
+
     return res.json({
       ok: true,
       balance: Number(wallet.balance_aed ?? 0),
-      stamps: [],
+      stamps,
       tx,
     });
   } catch (e) {
