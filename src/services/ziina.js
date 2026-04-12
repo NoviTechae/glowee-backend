@@ -344,6 +344,8 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
   const trx = await db.transaction();
 
   try {
+    console.log("ZIINA SUCCESS paymentIntentId =>", paymentIntentId);
+
     const transaction = await trx("payment_transactions")
       .where({
         provider_payment_id: paymentIntentId,
@@ -412,9 +414,8 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
         updated_at: trx.fn.now(),
       });
 
-    // ========================================
-    // WALLET TOPUP
-    // ========================================
+    console.log("ZIINA SUCCESS updated transaction to succeeded =>", transaction.id);
+
     if (transaction.type === "wallet_topup") {
       const { addWalletBalance } = require("../controllers/walletController");
       const { addPoints } = require("../controllers/rewardController");
@@ -433,9 +434,6 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       }
     }
 
-    // ========================================
-    // BOOKING PAYMENT
-    // ========================================
     if (transaction.type === "booking_payment" && transaction.booking_id) {
       console.log("UPDATING BOOKING TO CONFIRMED =>", transaction.booking_id);
 
@@ -465,9 +463,6 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       }
     }
 
-    // ========================================
-    // GIFT PURCHASE
-    // ========================================
     if (transaction.type === "gift_purchase" && transaction.gift_id) {
       const gift = await trx("gifts")
         .where({ id: transaction.gift_id })
