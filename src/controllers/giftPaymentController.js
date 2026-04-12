@@ -1,7 +1,7 @@
 // src/controllers/giftPaymentController.js
 
 const db = require('../db/knex');
-const tapService = require('../services/tap');
+const ziinaService = require('../services/ziina');
 const { spendWalletBalance, addWalletBalance } = require('./walletController');
 const { addPoints } = require('./rewardController');
 
@@ -214,7 +214,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       await trx.commit();
 
       // Create Tap charge
-      const tapResult = await tapService.createGiftCharge(
+      const ziinaResult = await ziinaService.createGiftPaymentIntent(
         userId,
         totalAmount,
         recipient_phone,
@@ -228,13 +228,12 @@ const sendGiftWithPayment = async (req, res, next) => {
         }
       );
 
-      if (!tapResult.ok) {
-        // Mark gift as cancelled
+      if (!ziinaResult.ok) {
         await db('gifts').where({ id: gift.id }).update({ status: 'cancelled' });
-        
+
         return res.status(400).json({
-          error: tapResult.error,
-          code: tapResult.code,
+          error: ziinaResult.error,
+          code: ziinaResult.code,
         });
       }
 
@@ -242,9 +241,10 @@ const sendGiftWithPayment = async (req, res, next) => {
         ok: true,
         gift_id: gift.id,
         payment_method: 'card',
-        payment_url: tapResult.payment_url,
-        charge_id: tapResult.charge_id,
-        transaction_id: tapResult.transaction_id,
+        provider: 'ziina',
+        payment_url: ziinaResult.payment_url,
+        payment_intent_id: ziinaResult.payment_intent_id,
+        transaction_id: ziinaResult.transaction_id,
         amount: totalAmount,
       });
     }
@@ -332,7 +332,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       await trx.commit();
 
       // Create Tap charge for card portion
-      const tapResult = await tapService.createGiftCharge(
+      const ziinaResult = await ziinaService.createGiftPaymentIntent(
         userId,
         cardAmount,
         recipient_phone,
@@ -347,22 +347,27 @@ const sendGiftWithPayment = async (req, res, next) => {
         }
       );
 
-      if (!tapResult.ok) {
-        // Refund wallet
+      if (!ziinaResult.ok) {
         const refundTrx = await db.transaction();
-        await addWalletBalance(
-          userId,
-          walletAmount,
-          'Refund - Split payment failed',
-          gift.id,
-          'refund',
-          refundTrx
-        );
+        try {
+          await addWalletBalance(
+            userId,
+            walletAmount,
+            'Refund - Split payment failed',
+            gift.id,
+            'refund',
+            refundTrx
+          );
+          await refundTrx.commit();
+        } catch (refundError) {
+          await refundTrx.rollback();
+          console.error('Split gift wallet refund failed:', refundError);
+        }
+
         await db('gifts').where({ id: gift.id }).update({ status: 'cancelled' });
-        await refundTrx.commit();
 
         return res.status(400).json({
-          error: tapResult.error,
+          error: ziinaResult.error,
           wallet_refunded: true,
         });
       }
@@ -371,11 +376,12 @@ const sendGiftWithPayment = async (req, res, next) => {
         ok: true,
         gift_id: gift.id,
         payment_method: 'split',
+        provider: 'ziina',
         wallet_amount: walletAmount,
         card_amount: cardAmount,
-        payment_url: tapResult.payment_url,
-        charge_id: tapResult.charge_id,
-        transaction_id: tapResult.transaction_id,
+        payment_url: ziinaResult.payment_url,
+        payment_intent_id: ziinaResult.payment_intent_id,
+        transaction_id: ziinaResult.transaction_id,
       });
     }
 
