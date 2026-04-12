@@ -565,6 +565,97 @@ exports.redeemGift = async (req, res, next) => {
   }
 };
 
+// ✅ POST /gifts/:id/convert-to-wallet
+exports.convertGiftToWallet = async (req, res, next) => {
+  const trx = await knex.transaction();
+
+  try {
+    const { id } = req.params;
+    const userId = req.user.sub || req.user.id;
+    const userPhone = req.user.phone;
+
+    const gift = await trx("gifts").where({ id }).first();
+
+    if (!gift) {
+      await trx.rollback();
+      return res.status(404).json({ error: "Gift not found" });
+    }
+
+    if (String(gift.recipient_phone) !== String(userPhone)) {
+      await trx.rollback();
+      return res.status(403).json({ error: "Not allowed" });
+    }
+
+    if (gift.status !== "active") {
+      await trx.rollback();
+      return res.status(400).json({ error: "Gift not usable" });
+    }
+
+    if (new Date(gift.expires_at) <= new Date()) {
+      await trx.rollback();
+      return res.status(400).json({ error: "Gift expired" });
+    }
+
+    const amountToConvert = Number(gift.amount_aed || 0);
+
+    if (amountToConvert <= 0) {
+      await trx.rollback();
+      return res.status(400).json({ error: "Invalid gift amount" });
+    }
+
+    const wallet = await trx("wallets").where({ user_id: userId }).first();
+
+    if (!wallet) {
+      await trx("wallets").insert({
+        user_id: userId,
+        balance_aed: 0,
+        created_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
+      });
+    }
+
+    const currentWallet = await trx("wallets").where({ user_id: userId }).first();
+    const newBalance = Number(currentWallet.balance_aed || 0) + amountToConvert;
+
+    await trx("wallets")
+      .where({ user_id: userId })
+      .update({
+        balance_aed: newBalance,
+        updated_at: trx.fn.now(),
+      });
+
+    await trx("wallet_transactions").insert({
+      wallet_id: currentWallet.id,
+      type: "gift_received",
+      amount_aed: amountToConvert,
+      balance_after_aed: newBalance,
+      reference_id: gift.id,
+      description: `Gift converted to wallet`,
+      created_at: trx.fn.now(),
+    });
+
+    await trx("gifts")
+      .where({ id })
+      .update({
+        status: "redeemed",
+        redeemed_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
+      });
+
+    await trx.commit();
+
+    return res.json({
+      ok: true,
+      message: "Gift converted to wallet successfully",
+      amount_added: amountToConvert,
+      new_balance: newBalance,
+    });
+  } catch (err) {
+    await trx.rollback();
+    next(err);
+  }
+};
+
 // ✅ POST /gifts/:id/seen
 exports.markGiftSeen = async (req, res, next) => {
   const trx = await knex.transaction();

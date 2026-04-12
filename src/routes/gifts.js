@@ -18,6 +18,9 @@ router.get("/:id", authRequired, giftController.getGiftById);
 // // ✅ Redeem
 router.post("/:id/redeem", authRequired, giftController.redeemGift);
 
+// ✅ Convert gift to wallet
+router.post("/:id/convert-to-wallet", authRequired, giftController.convertGiftToWallet);
+
 // ✅ ارسال هدية
 router.post("/send", authRequired, giftController.sendGift);
 
