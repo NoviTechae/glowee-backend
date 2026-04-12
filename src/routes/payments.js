@@ -390,6 +390,61 @@ router.get('/verify/:chargeId', authRequired, async (req, res, next) => {
   }
 });
 
+router.get('/ziina/booking/success', async (req, res) => {
+  try {
+    const paymentIntentId =
+      req.query.payment_intent_id ||
+      req.query.id ||
+      req.query.payment_intent ||
+      null;
+
+    console.log('Ziina booking success query:', req.query);
+
+    if (!paymentIntentId) {
+      return res.status(400).send('Missing payment_intent_id');
+    }
+
+    const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
+
+    if (!result.ok) {
+      console.error('Ziina booking success verify failed:', result.error);
+      return res.status(400).send('Unable to verify payment');
+    }
+
+    const normalizedStatus = String(result.status || '').toLowerCase();
+
+    if (['completed', 'paid', 'succeeded', 'requires_capture'].includes(normalizedStatus)) {
+      const successResult = await ziinaService.handlePaymentIntentSuccess(
+        paymentIntentId,
+        result.raw
+      );
+
+      if (!successResult.ok && !successResult.already_processed) {
+        console.error('Ziina booking success handler failed:', successResult.error);
+        return res.status(500).send('Failed to update booking');
+      }
+    } else {
+      console.log('Ziina booking success came back with non-success status:', normalizedStatus);
+    }
+
+    // رجعيه للتطبيق أو لصفحة نجاح عامة
+    return res.redirect(`${process.env.APP_URL}/booking/payment/success`);
+  } catch (error) {
+    console.error('Ziina booking success redirect error:', error);
+    return res.status(500).send('Server error');
+  }
+});
+
+router.get('/ziina/booking/cancel', async (req, res) => {
+  try {
+    console.log('Ziina booking cancel query:', req.query);
+    return res.redirect(`${process.env.APP_URL}/booking/payment/cancel`);
+  } catch (error) {
+    console.error('Ziina booking cancel redirect error:', error);
+    return res.status(500).send('Server error');
+  }
+});
+
 const bookingPayment = require('../controllers/bookingPaymentController');
 const giftPayment = require('../controllers/giftPaymentController');
 
