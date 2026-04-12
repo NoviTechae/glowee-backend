@@ -594,55 +594,40 @@ exports.convertGiftToWallet = async (req, res, next) => {
       return res.status(400).json({ error: "Gift not usable" });
     }
 
-    if (new Date(gift.expires_at) <= new Date()) {
+    if (gift.expires_at && new Date(gift.expires_at) <= new Date()) {
       await trx.rollback();
       return res.status(400).json({ error: "Gift expired" });
     }
 
     const amountToConvert = Number(gift.amount_aed || 0);
 
-    if (amountToConvert <= 0) {
+    if (!Number.isFinite(amountToConvert) || amountToConvert <= 0) {
       await trx.rollback();
       return res.status(400).json({ error: "Invalid gift amount" });
     }
 
-    const wallet = await trx("wallets").where({ user_id: userId }).first();
+    const { addWalletBalance, ensureWalletRow } = require("./walletController");
 
-    if (!wallet) {
-      await trx("wallets").insert({
-        user_id: userId,
-        balance_aed: 0,
-        created_at: trx.fn.now(),
-        updated_at: trx.fn.now(),
-      });
-    }
+    await ensureWalletRow(userId, trx);
 
-    const currentWallet = await trx("wallets").where({ user_id: userId }).first();
-    const newBalance = Number(currentWallet.balance_aed || 0) + amountToConvert;
+    await addWalletBalance(
+      userId,
+      amountToConvert,
+      "Gift converted to wallet",
+      gift.id,
+      "gift_received",
+      trx
+    );
 
-    await trx("wallets")
+    const updatedWallet = await trx("wallets")
       .where({ user_id: userId })
-      .update({
-        balance_aed: newBalance,
-        updated_at: trx.fn.now(),
-      });
-
-    await trx("wallet_transactions").insert({
-      wallet_id: currentWallet.id,
-      type: "gift_received",
-      amount_aed: amountToConvert,
-      balance_after_aed: newBalance,
-      reference_id: gift.id,
-      description: `Gift converted to wallet`,
-      created_at: trx.fn.now(),
-    });
+      .first();
 
     await trx("gifts")
       .where({ id })
       .update({
         status: "redeemed",
         redeemed_at: trx.fn.now(),
-        updated_at: trx.fn.now(),
       });
 
     await trx.commit();
@@ -651,7 +636,7 @@ exports.convertGiftToWallet = async (req, res, next) => {
       ok: true,
       message: "Gift converted to wallet successfully",
       amount_added: amountToConvert,
-      new_balance: newBalance,
+      new_balance: Number(updatedWallet?.balance_aed || 0),
     });
   } catch (err) {
     await trx.rollback();
