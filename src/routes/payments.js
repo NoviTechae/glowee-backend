@@ -399,18 +399,31 @@ router.get('/verify/:chargeId', authRequired, async (req, res, next) => {
 
 router.get('/ziina/booking/success', async (req, res) => {
   try {
-    const paymentIntentId =
-      req.query.payment_intent_id ||
-      req.query.id ||
-      req.query.payment_intent ||
-      null;
+    const bookingId = req.query.booking_id || null;
 
     console.log('Ziina booking success query:', req.query);
-    console.log('Ziina booking success paymentIntentId:', paymentIntentId);
+    console.log('Ziina booking success bookingId:', bookingId);
 
-    if (!paymentIntentId) {
-      return res.status(400).send('Missing payment_intent_id');
+    if (!bookingId) {
+      return res.status(400).send('Missing booking_id');
     }
+
+    const transaction = await db('payment_transactions')
+      .where({
+        provider: 'ziina',
+        type: 'booking_payment',
+        booking_id: bookingId,
+      })
+      .orderBy('created_at', 'desc')
+      .first();
+
+    console.log('Ziina booking success transaction from booking_id:', transaction);
+
+    if (!transaction?.provider_payment_id) {
+      return res.status(404).send('Booking payment transaction not found');
+    }
+
+    const paymentIntentId = transaction.provider_payment_id;
 
     const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
 
@@ -421,43 +434,20 @@ router.get('/ziina/booking/success', async (req, res) => {
       return res.status(400).send('Unable to verify payment');
     }
 
-    const normalizedStatus = String(result.status || '').toLowerCase();
+    const successResult = await ziinaService.handlePaymentIntentSuccess(
+      paymentIntentId,
+      result.raw
+    );
 
-    console.log('Ziina booking success normalized status:', normalizedStatus);
+    console.log('Ziina booking success handler result:', successResult);
 
-    const successStatuses = [
-      'completed',
-      'paid',
-      'succeeded',
-      'success',
-      'successful',
-      'captured',
-      'processed',
-      'requires_capture',
-    ];
-
-    let bookingId = '';
-
-    if (successStatuses.includes(normalizedStatus)) {
-      const successResult = await ziinaService.handlePaymentIntentSuccess(
-        paymentIntentId,
-        result.raw
-      );
-
-      console.log('Ziina booking success handler result:', successResult);
-
-      if (!successResult.ok && !successResult.already_processed) {
-        console.error('Ziina booking success handler failed:', successResult.error);
-        return res.status(500).send('Failed to confirm booking');
-      }
-
-      bookingId = successResult.booking_id || '';
-    } else {
-      console.log('Ziina booking success skipped because status is not treated as success');
+    if (!successResult.ok && !successResult.already_processed) {
+      console.error('Ziina booking success handler failed:', successResult.error);
+      return res.status(500).send('Failed to confirm booking');
     }
 
     return res.redirect(
-      `/payments/ziina/booking/done?booking_id=${encodeURIComponent(bookingId)}&payment_intent_id=${paymentIntentId}`
+      `/payments/ziina/booking/done?booking_id=${encodeURIComponent(String(bookingId))}`
     );
   } catch (error) {
     console.error('Ziina booking success redirect error:', error);

@@ -151,13 +151,14 @@ async function createBookingPaymentIntent(
   metadata = {}
 ) {
   try {
-    const payload = {
-      amount: Math.round(Number(amountAed) * 100),
-      currency_code: "AED",
-      message: "Glowee · Beauty Booking",
-      ...buildBookingUrls(),
-      test: false,
-    };
+const payload = {
+  amount: Math.round(Number(amountAed) * 100),
+  currency_code: "AED",
+  message: "Glowee · Beauty Booking",
+  success_url: `${process.env.API_URL}/payments/ziina/booking/success?booking_id=${encodeURIComponent(bookingId)}`,
+  cancel_url: `${process.env.API_URL}/payments/ziina/booking/cancel?booking_id=${encodeURIComponent(bookingId)}`,
+  test: false,
+};
 
     console.log("Creating Ziina booking payment intent...", {
       bookingId,
