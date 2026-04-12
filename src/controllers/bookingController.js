@@ -1,10 +1,9 @@
-// src/controllers/bookingController.js
 const knex = require("../db/knex");
 const { addPoints } = require("./rewardController");
 const { handleMonthlyStreak } = require("./streakController");
 
 function calcBookingPoints(totalAed) {
-  const unit = 10; // أو 15 حسب قرارك
+  const unit = 10;
   return Math.floor(Number(totalAed || 0) / unit);
 }
 
@@ -12,47 +11,36 @@ async function completeBooking(bookingId) {
   const trx = await knex.transaction();
 
   try {
-    const booking = await trx("bookings")
-      .where({ id: bookingId })
-      .first();
+    const booking = await trx("bookings").where({ id: bookingId }).first();
 
     if (!booking) {
       await trx.rollback();
       throw new Error("Booking not found");
     }
 
-    // ✅ idempotent: لو مكتمل خلاص
     if (booking.status === "completed") {
       await trx.commit();
       return { basePoints: Number(booking.points_earned || 0), bonusPoints: 0 };
     }
 
-    // ✅ احسب نقاط الحجز
     const basePoints = calcBookingPoints(booking.total_aed);
 
-    // ✅ حدّث الحجز مرة وحدة (status + points)
-    await trx("bookings")
-      .where({ id: bookingId })
-      .update({
-        status: "completed",
-        points_earned: basePoints,
-        updated_at: trx.fn.now(),
-      });
+    await trx("bookings").where({ id: bookingId }).update({
+      status: "completed",
+      points_earned: basePoints,
+      updated_at: trx.fn.now(),
+    });
 
-    // ✅ إضافة نقاط الحجز الأساسية مرة وحدة
     if (basePoints > 0) {
       await addPoints(booking.user_id, basePoints, "booking_completed", bookingId, trx);
     }
 
-    // ✅ streak update
     const { bonusMultiplier } = await handleMonthlyStreak(booking.user_id, trx);
     let bonusPoints = 0;
 
-    // ✅ bonus only once
     if (bonusMultiplier > 0 && basePoints > 0 && !booking.streak_bonus_applied) {
       bonusPoints = Math.floor(basePoints * bonusMultiplier);
 
-      // علمي انه انصرف الستريك
       await trx("bookings")
         .where({ id: bookingId })
         .update({ streak_bonus_applied: true });
@@ -70,7 +58,7 @@ async function completeBooking(bookingId) {
   }
 }
 
-exports.confirmGiftBooking = async (req, res, next) => {
+async function confirmGiftBooking(req, res, next) {
   const trx = await knex.transaction();
 
   try {
@@ -92,9 +80,7 @@ exports.confirmGiftBooking = async (req, res, next) => {
       return res.status(404).json({ error: "Booking not found" });
     }
 
-    const gift = await trx("gifts")
-      .where({ id: gift_id })
-      .first();
+    const gift = await trx("gifts").where({ id: gift_id }).first();
 
     if (!gift) {
       await trx.rollback();
@@ -116,18 +102,14 @@ exports.confirmGiftBooking = async (req, res, next) => {
       return res.status(400).json({ error: "Gift has expired" });
     }
 
-    await trx("bookings")
-      .where({ id: bookingId })
-      .update({
-        status: "confirmed",
-      });
+    await trx("bookings").where({ id: bookingId }).update({
+      status: "confirmed",
+    });
 
-    await trx("gifts")
-      .where({ id: gift_id })
-      .update({
-        status: "redeemed",
-        redeemed_at: trx.fn.now(),
-      });
+    await trx("gifts").where({ id: gift_id }).update({
+      status: "redeemed",
+      redeemed_at: trx.fn.now(),
+    });
 
     await trx.commit();
 
@@ -140,6 +122,9 @@ exports.confirmGiftBooking = async (req, res, next) => {
     await trx.rollback();
     next(err);
   }
-};
+}
 
-module.exports = { completeBooking };
+module.exports = {
+  completeBooking,
+  confirmGiftBooking,
+};
