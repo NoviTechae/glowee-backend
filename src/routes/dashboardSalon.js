@@ -6,6 +6,7 @@ const dashboardAuthRequired = require("../middleware/dashboardAuthRequired");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const { completeBooking } = require("../controllers/bookingController");
 
 const uploadDir = path.join(process.cwd(), "public", "uploads", "salons");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -1299,6 +1300,18 @@ router.put("/bookings/:bookingId/status", dashboardAuthRequired, requireSalon, a
       return res.status(404).json({ error: "Booking not found" });
     }
 
+    // 🔥🔥🔥 أهم جزء
+    if (status === "completed") {
+      const result = await completeBooking(bookingId);
+
+      return res.json({
+        ok: true,
+        type: "completed",
+        ...result,
+      });
+    }
+
+    // باقي الحالات عادي
     const [row] = await db("bookings")
       .where({ id: bookingId, salon_id })
       .update({
@@ -1308,6 +1321,7 @@ router.put("/bookings/:bookingId/status", dashboardAuthRequired, requireSalon, a
       .returning("*");
 
     res.json({ booking: row });
+
   } catch (e) {
     next(e);
   }
