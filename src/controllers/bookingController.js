@@ -70,4 +70,76 @@ async function completeBooking(bookingId) {
   }
 }
 
+exports.confirmGiftBooking = async (req, res, next) => {
+  const trx = await knex.transaction();
+
+  try {
+    const bookingId = req.params.id;
+    const userId = req.user.sub || req.user.id;
+    const { gift_id } = req.body;
+
+    if (!gift_id) {
+      await trx.rollback();
+      return res.status(400).json({ error: "gift_id is required" });
+    }
+
+    const booking = await trx("bookings")
+      .where({ id: bookingId, user_id: userId })
+      .first();
+
+    if (!booking) {
+      await trx.rollback();
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    const gift = await trx("gifts")
+      .where({ id: gift_id })
+      .first();
+
+    if (!gift) {
+      await trx.rollback();
+      return res.status(404).json({ error: "Gift not found" });
+    }
+
+    if (String(gift.recipient_phone) !== String(req.user.phone)) {
+      await trx.rollback();
+      return res.status(403).json({ error: "This gift does not belong to you" });
+    }
+
+    if (gift.status !== "active") {
+      await trx.rollback();
+      return res.status(400).json({ error: "Gift is not active" });
+    }
+
+    if (gift.expires_at && new Date(gift.expires_at) <= new Date()) {
+      await trx.rollback();
+      return res.status(400).json({ error: "Gift has expired" });
+    }
+
+    await trx("bookings")
+      .where({ id: bookingId })
+      .update({
+        status: "confirmed",
+      });
+
+    await trx("gifts")
+      .where({ id: gift_id })
+      .update({
+        status: "redeemed",
+        redeemed_at: trx.fn.now(),
+      });
+
+    await trx.commit();
+
+    return res.json({
+      ok: true,
+      booking_id: bookingId,
+      gift_id,
+    });
+  } catch (err) {
+    await trx.rollback();
+    next(err);
+  }
+};
+
 module.exports = { completeBooking };
