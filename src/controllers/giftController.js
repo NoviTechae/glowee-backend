@@ -17,24 +17,28 @@ exports.getReceivedCards = async (req, res, next) => {
   try {
     const userPhone = req.user.phone;
 
-    const rows = await knex("gifts as g")
-      .leftJoin("salons as s", "s.id", "g.salon_id")
-      .where("g.recipient_phone", userPhone)
-      .select([
-        "g.id",
-        "g.theme_id",
-        "g.sender_name",
-        "g.message",
-        "g.status",
-        "g.created_at",
-        "g.expires_at",
-        "g.redeemed_at",
-        "g.salon_id",
-        "g.amount_aed",
-        knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
-        knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
-      ])
-      .orderBy("g.created_at", "desc");
+const rows = await knex("gifts as g")
+  .leftJoin("salons as s", "s.id", "g.salon_id")
+  .leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
+  .where("g.recipient_phone", userPhone)
+  .select([
+    "g.id",
+    "g.theme_id",
+    "g.sender_name",
+    "g.message",
+    "g.status",
+    "g.created_at",
+    "g.expires_at",
+    "g.redeemed_at",
+    "g.salon_id",
+    "g.amount_aed",
+    "gt.title as theme_title",
+    "gt.front_image_url",
+    "gt.back_image_url",
+    knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
+    knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
+  ])
+  .orderBy("g.created_at", "desc");
 
     const giftIds = rows.map((r) => r.id);
     let itemsCounts = {};
@@ -51,20 +55,23 @@ exports.getReceivedCards = async (req, res, next) => {
       });
     }
 
-    const data = rows.map((r) => ({
-      id: r.id,
-      theme_id: r.theme_id,
-      merchant_name: r.merchant_name,
-      type: r.type,
-      items_count: itemsCounts[r.id] || 0,
-      from_name: r.sender_name,
-      message: r.message,
-      status: mapGiftStatus(r.status),
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      redeemed_at: r.redeemed_at,
-      amount_aed: Number(r.amount_aed),
-    }));
+const data = rows.map((r) => ({
+  id: r.id,
+  theme_id: r.theme_id,
+  theme_title: r.theme_title,
+  front_image_url: r.front_image_url,
+  back_image_url: r.back_image_url,
+  merchant_name: r.merchant_name,
+  type: r.type,
+  items_count: itemsCounts[r.id] || 0,
+  from_name: r.sender_name,
+  message: r.message,
+  status: mapGiftStatus(r.status),
+  created_at: r.created_at,
+  expires_at: r.expires_at,
+  redeemed_at: r.redeemed_at,
+  amount_aed: Number(r.amount_aed),
+}));
 
     res.json({ ok: true, data });
   } catch (err) {
@@ -77,25 +84,29 @@ exports.getAvailableGifts = async (req, res, next) => {
   try {
     const userPhone = req.user.phone;
 
-    const rows = await knex("gifts as g")
-      .leftJoin("salons as s", "s.id", "g.salon_id")
-      .where("g.recipient_phone", userPhone)
-      .andWhere("g.status", "active")
-      .andWhere("g.expires_at", ">", knex.fn.now())
-      .select([
-        "g.id",
-        "g.theme_id",
-        "g.sender_name",
-        "g.message",
-        "g.status",
-        "g.created_at",
-        "g.expires_at",
-        "g.salon_id",
-        "g.amount_aed",
-        knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
-        knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
-      ])
-      .orderBy("g.created_at", "desc");
+const rows = await knex("gifts as g")
+  .leftJoin("salons as s", "s.id", "g.salon_id")
+  .leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
+  .where("g.recipient_phone", userPhone)
+  .andWhere("g.status", "active")
+  .andWhere("g.expires_at", ">", knex.fn.now())
+  .select([
+    "g.id",
+    "g.theme_id",
+    "g.sender_name",
+    "g.message",
+    "g.status",
+    "g.created_at",
+    "g.expires_at",
+    "g.salon_id",
+    "g.amount_aed",
+    "gt.title as theme_title",
+    "gt.front_image_url",
+    "gt.back_image_url",
+    knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
+    knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
+  ])
+  .orderBy("g.created_at", "desc");
 
     const giftIds = rows.map((r) => r.id);
     let itemsCounts = {};
@@ -112,19 +123,22 @@ exports.getAvailableGifts = async (req, res, next) => {
       });
     }
 
-    const data = rows.map((r) => ({
-      id: r.id,
-      theme_id: r.theme_id,
-      merchant_name: r.merchant_name,
-      type: r.type,
-      items_count: itemsCounts[r.id] || 0,
-      from_name: r.sender_name,
-      message: r.message,
-      status: "received",
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      amount_aed: Number(r.amount_aed),
-    }));
+const data = rows.map((r) => ({
+  id: r.id,
+  theme_id: r.theme_id,
+  theme_title: r.theme_title,
+  front_image_url: r.front_image_url,
+  back_image_url: r.back_image_url,
+  merchant_name: r.merchant_name,
+  type: r.type,
+  items_count: itemsCounts[r.id] || 0,
+  from_name: r.sender_name,
+  message: r.message,
+  status: "received",
+  created_at: r.created_at,
+  expires_at: r.expires_at,
+  amount_aed: Number(r.amount_aed),
+}));
 
     res.json({ ok: true, data });
   } catch (err) {
@@ -140,7 +154,7 @@ exports.getSentGifts = async (req, res, next) => {
     const statusFilter = tab === "redeemed" ? "redeemed" : "active";
 
     const rows = await knex("gifts as g")
-      .leftJoin("salons as s", "s.id", "g.salon_id")
+.leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
       .where("g.sender_user_id", userId)
       .andWhere("g.status", statusFilter)
       .select([
@@ -154,6 +168,9 @@ exports.getSentGifts = async (req, res, next) => {
         "g.redeemed_at",
         "g.salon_id",
         "g.amount_aed",
+        "gt.title as theme_title",
+"gt.front_image_url",
+"gt.back_image_url",
         knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
         knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
       ])
@@ -174,20 +191,23 @@ exports.getSentGifts = async (req, res, next) => {
       });
     }
 
-    const data = rows.map((r) => ({
-      id: r.id,
-      theme_id: r.theme_id,
-      merchant_name: r.merchant_name,
-      type: r.type,
-      items_count: itemsCounts[r.id] || 0,
-      from_name: r.sender_name || "You",
-      message: r.message,
-      status: mapGiftStatus(r.status),
-      created_at: r.created_at,
-      expires_at: r.expires_at,
-      redeemed_at: r.redeemed_at,
-      amount_aed: Number(r.amount_aed),
-    }));
+const data = rows.map((r) => ({
+  id: r.id,
+  theme_id: r.theme_id,
+  theme_title: r.theme_title,
+  front_image_url: r.front_image_url,
+  back_image_url: r.back_image_url,
+  merchant_name: r.merchant_name,
+  type: r.type,
+  items_count: itemsCounts[r.id] || 0,
+  from_name: r.sender_name || "You",
+  message: r.message,
+  status: mapGiftStatus(r.status),
+  created_at: r.created_at,
+  expires_at: r.expires_at,
+  redeemed_at: r.redeemed_at,
+  amount_aed: Number(r.amount_aed),
+}));
 
     res.json({ ok: true, data });
   } catch (err) {
@@ -201,26 +221,30 @@ exports.getGiftById = async (req, res, next) => {
     const userId = req.user.sub || req.user.id;
     const { id } = req.params;
 
-    const row = await knex("gifts as g")
-      .leftJoin("salons as s", "s.id", "g.salon_id")
-      .where("g.id", id)
-      .first([
-        "g.id",
-        "g.theme_id",
-        "g.sender_user_id",
-        "g.recipient_phone",
-        "g.sender_name",
-        "g.message",
-        "g.status",
-        "g.created_at",
-        "g.expires_at",
-        "g.redeemed_at",
-        "g.salon_id",
-        "g.amount_aed",
-        "g.code",
-        knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
-        knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
-      ]);
+const row = await knex("gifts as g")
+  .leftJoin("salons as s", "s.id", "g.salon_id")
+  .leftJoin("gift_themes as gt", "gt.id", "g.theme_id")
+  .where("g.id", id)
+  .first([
+    "g.id",
+    "g.theme_id",
+    "g.sender_user_id",
+    "g.recipient_phone",
+    "g.sender_name",
+    "g.message",
+    "g.status",
+    "g.created_at",
+    "g.expires_at",
+    "g.redeemed_at",
+    "g.salon_id",
+    "g.amount_aed",
+    "g.code",
+    "gt.title as theme_title",
+    "gt.front_image_url",
+    "gt.back_image_url",
+    knex.raw("COALESCE(s.name, 'Glowee') as merchant_name"),
+    knex.raw("CASE WHEN g.salon_id IS NULL THEN 'gift_card' ELSE 'service' END as type"),
+  ]);
 
     if (!row) return res.status(404).json({ error: "Gift not found" });
 
@@ -245,30 +269,33 @@ exports.getGiftById = async (req, res, next) => {
 
     res.json({
       ok: true,
-      data: {
-        id: row.id,
-        theme_id: row.theme_id,
-        merchant_name: row.merchant_name,
-        type: row.type,
-        items_count: items.length,
-        items: items.map((it) => ({
-          id: it.id,
-          service_availability_id: it.service_availability_id,
-          service_name: it.service_name,
-          qty: Number(it.qty),
-          unit_price_aed: Number(it.unit_price_aed),
-          line_total_aed: Number(it.line_total_aed),
-          duration_mins: Number(it.duration_mins),
-        })),
-        from_name: row.sender_name,
-        message: row.message,
-        status: mapGiftStatus(row.status),
-        created_at: row.created_at,
-        expires_at: row.expires_at,
-        redeemed_at: row.redeemed_at,
-        amount_aed: Number(row.amount_aed),
-        code: row.code,
-      },
+data: {
+  id: row.id,
+  theme_id: row.theme_id,
+  theme_title: row.theme_title,
+  front_image_url: row.front_image_url,
+  back_image_url: row.back_image_url,
+  merchant_name: row.merchant_name,
+  type: row.type,
+  items_count: items.length,
+  items: items.map((it) => ({
+    id: it.id,
+    service_availability_id: it.service_availability_id,
+    service_name: it.service_name,
+    qty: Number(it.qty),
+    unit_price_aed: Number(it.unit_price_aed),
+    line_total_aed: Number(it.line_total_aed),
+    duration_mins: Number(it.duration_mins),
+  })),
+  from_name: row.sender_name,
+  message: row.message,
+  status: mapGiftStatus(row.status),
+  created_at: row.created_at,
+  expires_at: row.expires_at,
+  redeemed_at: row.redeemed_at,
+  amount_aed: Number(row.amount_aed),
+  code: row.code,
+},
     });
   } catch (err) {
     next(err);
