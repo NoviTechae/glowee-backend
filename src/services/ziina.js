@@ -469,6 +469,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           .where({ id: transaction.gift_id })
           .update({
             status: "active",
+            updated_at: trx.fn.now(),
           });
 
         const metadata =
@@ -488,7 +489,27 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
         const recipientPhone = metadata.recipient_phone || gift.recipient_phone;
         const giftCode = metadata.gift_code || gift.code;
 
+        const receiverUser = await trx("users")
+          .where({ phone: recipientPhone })
+          .first("id");
+
         await trx.commit();
+
+        if (receiverUser?.id) {
+          setImmediate(async () => {
+            try {
+              const { notifyGiftReceived } = require("../utils/notifications");
+              await notifyGiftReceived(
+                receiverUser.id,
+                gift.id,
+                senderName,
+                Number(gift.amount_aed || transaction.amount_aed || 0)
+              );
+            } catch (e) {
+              console.error("Gift push notification failed after Ziina success:", e?.message || e);
+            }
+          });
+        }
 
         setImmediate(async () => {
           try {
@@ -513,6 +534,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
         };
       }
     }
+
 
     await trx.commit();
 
