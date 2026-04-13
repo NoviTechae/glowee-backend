@@ -6,6 +6,63 @@ const { spendWalletBalance, addWalletBalance } = require("./walletController");
 const { addPoints } = require("./rewardController");
 const { sendGiftNotification } = require("../services/whatsapp");
 
+function toNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function calculateServiceItemsSubtotal(items = []) {
+  let subtotal = 0;
+
+  for (const item of items) {
+    const unitPrice = toNum(
+      item?.unit_price_aed ??
+      item?.price_aed ??
+      item?.price ??
+      item?.amount ??
+      item?.unit_price ??
+      0
+    );
+
+    const qty = Math.max(1, toNum(item?.qty ?? item?.quantity ?? 1));
+    subtotal += unitPrice * qty;
+  }
+
+  return round2(subtotal);
+}
+
+function getGiftFeeAed(giftType, subtotal) {
+  const configured = toNum(process.env.GIFT_FEE_AED || 0);
+
+  if (subtotal <= 0) return 0;
+
+  // إذا تبين مستقبلاً تفرقين بين money / service تقدرين هنا
+  return round2(configured);
+}
+
+function calculateGiftTotals({ gift_type, amount_aed, service_items }) {
+  let subtotal = 0;
+
+  if (gift_type === "money") {
+    subtotal = round2(toNum(amount_aed));
+  } else if (gift_type === "service") {
+    subtotal = calculateServiceItemsSubtotal(service_items || []);
+  }
+
+  const giftFee = getGiftFeeAed(gift_type, subtotal);
+  const total = round2(subtotal + giftFee);
+
+  return {
+    subtotal_aed: subtotal,
+    gift_fee_aed: giftFee,
+    total_aed: total,
+  };
+}
+
 /**
  * POST /gifts/send-with-payment
  * Send gift with payment
@@ -15,7 +72,7 @@ const { sendGiftNotification } = require("../services/whatsapp");
  *   "recipient_phone": "+971501234567",
  *   "gift_type": "money" | "service",
  *   "amount_aed": 200,
- *   "service_items": [...], // Only for service gifts
+ *   "service_items": [...],
  *   "payment_method": "card" | "wallet" | "split",
  *   "message": "Happy Birthday!",
  *   "sender_name": "Ali",
@@ -60,18 +117,26 @@ const sendGiftWithPayment = async (req, res, next) => {
       });
     }
 
-    const totalAmount = Number(amount_aed);
-
-    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
-      await trx.rollback();
-      return res.status(400).json({ error: "Invalid amount_aed" });
-    }
-
     if (gift_type === "service" && (!Array.isArray(service_items) || service_items.length === 0)) {
       await trx.rollback();
       return res.status(400).json({
         error: "service_items are required for service gifts",
       });
+    }
+
+    const pricing = calculateGiftTotals({
+      gift_type,
+      amount_aed,
+      service_items,
+    });
+
+    const subtotalAmount = pricing.subtotal_aed;
+    const giftFeeAmount = pricing.gift_fee_aed;
+    const totalAmount = pricing.total_aed;
+
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      await trx.rollback();
+      return res.status(400).json({ error: "Invalid gift total" });
     }
 
     // money gift => only card
@@ -155,14 +220,17 @@ const sendGiftWithPayment = async (req, res, next) => {
 
       if (Array.isArray(service_items) && service_items.length > 0) {
         for (const item of service_items) {
+          const qty = Math.max(1, toNum(item.qty || 1));
+          const unitPrice = toNum(item.unit_price_aed || 0);
+
           await trx("gift_items").insert({
             gift_id: gift.id,
             service_availability_id: item.availability_id,
             service_name: item.service_name || "Service",
-            qty: Number(item.qty || 1),
-            unit_price_aed: Number(item.unit_price_aed || 0),
-            line_total_aed: Number(item.unit_price_aed || 0) * Number(item.qty || 1),
-            duration_mins: Number(item.duration_mins || 0),
+            qty,
+            unit_price_aed: unitPrice,
+            line_total_aed: round2(unitPrice * qty),
+            duration_mins: toNum(item.duration_mins || 0),
             created_at: trx.fn.now(),
           });
         }
@@ -185,9 +253,16 @@ const sendGiftWithPayment = async (req, res, next) => {
         type: "gift_purchase",
         status: "succeeded",
         amount_aed: totalAmount,
+        fee_aed: giftFeeAmount,
         net_amount_aed: totalAmount,
         gift_id: gift.id,
         payment_method_type: "wallet",
+        metadata: {
+          gift_type,
+          subtotal_aed: subtotalAmount,
+          gift_fee_aed: giftFeeAmount,
+          total_aed: totalAmount,
+        },
         succeeded_at: trx.fn.now(),
         created_at: trx.fn.now(),
       });
@@ -237,14 +312,17 @@ const sendGiftWithPayment = async (req, res, next) => {
 
       if (gift_type === "service" && Array.isArray(service_items) && service_items.length > 0) {
         for (const item of service_items) {
+          const qty = Math.max(1, toNum(item.qty || 1));
+          const unitPrice = toNum(item.unit_price_aed || 0);
+
           await trx("gift_items").insert({
             gift_id: gift.id,
             service_availability_id: item.availability_id,
             service_name: item.service_name || "Service",
-            qty: Number(item.qty || 1),
-            unit_price_aed: Number(item.unit_price_aed || 0),
-            line_total_aed: Number(item.unit_price_aed || 0) * Number(item.qty || 1),
-            duration_mins: Number(item.duration_mins || 0),
+            qty,
+            unit_price_aed: unitPrice,
+            line_total_aed: round2(unitPrice * qty),
+            duration_mins: toNum(item.duration_mins || 0),
             created_at: trx.fn.now(),
           });
         }
@@ -266,6 +344,9 @@ const sendGiftWithPayment = async (req, res, next) => {
           sender_name: safeSenderName,
           merchant_name: salonName,
           theme_emoji: themeEmoji,
+          subtotal_aed: subtotalAmount,
+          gift_fee_aed: giftFeeAmount,
+          total_aed: totalAmount,
         }
       );
 
@@ -314,7 +395,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       }
 
       const walletAmount = Math.min(walletBalance, totalAmount);
-      const cardAmount = totalAmount - walletAmount;
+      const cardAmount = round2(totalAmount - walletAmount);
 
       const [gift] = await trx("gifts")
         .insert({
@@ -334,14 +415,17 @@ const sendGiftWithPayment = async (req, res, next) => {
 
       if (Array.isArray(service_items) && service_items.length > 0) {
         for (const item of service_items) {
+          const qty = Math.max(1, toNum(item.qty || 1));
+          const unitPrice = toNum(item.unit_price_aed || 0);
+
           await trx("gift_items").insert({
             gift_id: gift.id,
             service_availability_id: item.availability_id,
             service_name: item.service_name || "Service",
-            qty: Number(item.qty || 1),
-            unit_price_aed: Number(item.unit_price_aed || 0),
-            line_total_aed: Number(item.unit_price_aed || 0) * Number(item.qty || 1),
-            duration_mins: Number(item.duration_mins || 0),
+            qty,
+            unit_price_aed: unitPrice,
+            line_total_aed: round2(unitPrice * qty),
+            duration_mins: toNum(item.duration_mins || 0),
             created_at: trx.fn.now(),
           });
         }
@@ -362,11 +446,20 @@ const sendGiftWithPayment = async (req, res, next) => {
         type: "gift_purchase",
         status: "succeeded",
         amount_aed: walletAmount,
+        fee_aed: 0,
         net_amount_aed: walletAmount,
         gift_id: gift.id,
         payment_method_type: "wallet",
+        metadata: {
+          split_payment: true,
+          wallet_used: walletAmount,
+          card_amount: cardAmount,
+          gift_type,
+          subtotal_aed: subtotalAmount,
+          gift_fee_aed: giftFeeAmount,
+          total_aed: totalAmount,
+        },
         succeeded_at: trx.fn.now(),
-        metadata: { split_payment: true },
         created_at: trx.fn.now(),
       });
 
@@ -384,10 +477,14 @@ const sendGiftWithPayment = async (req, res, next) => {
           gift_type,
           split_payment: true,
           wallet_used: walletAmount,
+          card_amount: cardAmount,
           gift_code: giftCode,
           sender_name: safeSenderName,
           merchant_name: salonName,
           theme_emoji: themeEmoji,
+          subtotal_aed: subtotalAmount,
+          gift_fee_aed: giftFeeAmount,
+          total_aed: totalAmount,
         }
       );
 
@@ -445,25 +542,47 @@ const sendGiftWithPayment = async (req, res, next) => {
 
 /**
  * GET /gifts/payment-options
- * Get available payment options for sending a gift
+ * Query:
+ * - gift_type=money|service
+ * - amount_aed=...
+ *
+ * For service gifts:
+ * - service_items can be passed as JSON string in query
  */
 const getGiftPaymentOptions = async (req, res, next) => {
   try {
-    const { gift_type, amount_aed } = req.query;
+    const { gift_type, amount_aed, service_items } = req.query;
     const userId = req.user.sub;
 
-    if (!gift_type || !amount_aed) {
+    if (!gift_type) {
       return res.status(400).json({
-        error: "gift_type and amount_aed required",
+        error: "gift_type required",
       });
     }
 
-    const totalAmount = Number(amount_aed);
+    let parsedServiceItems = [];
+    if (typeof service_items === "string" && service_items.trim()) {
+      try {
+        parsedServiceItems = JSON.parse(service_items);
+      } catch {
+        return res.status(400).json({ error: "Invalid service_items JSON" });
+      }
+    }
+
+    const pricing = calculateGiftTotals({
+      gift_type,
+      amount_aed,
+      service_items: parsedServiceItems,
+    });
+
+    const totalAmount = pricing.total_aed;
     const wallet = await db("wallets").where({ user_id: userId }).first();
     const walletBalance = wallet ? Number(wallet.balance_aed) : 0;
 
     const options = {
       gift_type,
+      subtotal_aed: pricing.subtotal_aed,
+      gift_fee_aed: pricing.gift_fee_aed,
       total_amount: totalAmount,
       wallet_balance: walletBalance,
       payment_methods: [],
@@ -504,9 +623,9 @@ const getGiftPaymentOptions = async (req, res, next) => {
           method: "split",
           label: "Wallet + Card",
           wallet_amount: walletBalance,
-          card_amount: totalAmount - walletBalance,
+          card_amount: round2(totalAmount - walletBalance),
           available: true,
-          description: `Pay AED ${walletBalance} from wallet + AED ${(totalAmount - walletBalance).toFixed(2)} with card`,
+          description: `Pay AED ${walletBalance.toFixed(2)} from wallet + AED ${(totalAmount - walletBalance).toFixed(2)} with card`,
         });
       }
     }
