@@ -8,6 +8,9 @@ const path = require("path");
 
 const app = express();
 
+// ✅ FIX: define router
+const router = express.Router();
+
 // ===== SECURITY CONFIGURATION =====
 
 // 1. Trust proxy (for HTTPS detection behind load balancers)
@@ -129,7 +132,10 @@ app.use(require("./routes/meProfile"));
 app.use("/users", require("./routes/users"));
 app.use("/notifications", require("./routes/notifications"));
 app.use("/support", require("./routes/support"));
-app.use("/ratings", require("./ratings"));
+
+// ✅ FIX: use app instead of router OR keep router defined
+router.use("/ratings", require("./routes/ratings"));
+app.use(router);
 
 // Public browse
 app.use("/salons", require("./routes/salons"));
