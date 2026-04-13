@@ -1,13 +1,8 @@
-// src/routes/ratings.js
-
 const router = require("express").Router();
 const db = require("../db/knex");
 const authRequired = require("../middleware/authRequired");
 const controller = require("../controllers/ratingController");
 
-// =======================================
-// GET /ratings/pending
-// =======================================
 router.get("/pending", authRequired, async (req, res, next) => {
   try {
     const userId = req.user.sub;
@@ -35,9 +30,6 @@ router.get("/pending", authRequired, async (req, res, next) => {
   }
 });
 
-// =======================================
-// POST /ratings/:bookingId
-// =======================================
 router.post("/:bookingId", authRequired, async (req, res, next) => {
   try {
     const userId = req.user.sub;
@@ -81,9 +73,6 @@ router.post("/:bookingId", authRequired, async (req, res, next) => {
         })
         .returning("*");
 
-      // =========================
-      // UPDATE BRANCH SNAPSHOT
-      // =========================
       if (booking.branch_id) {
         const [{ avg, count }] = await trx("booking_ratings")
           .where({ branch_id: booking.branch_id })
@@ -108,6 +97,6 @@ router.post("/:bookingId", authRequired, async (req, res, next) => {
   }
 });
 
-router.post("/branches/:branchId/rate", controller.rateBranch);
+router.post("/branches/:branchId/rate", authRequired, controller.rateBranch);
 
 module.exports = router;
