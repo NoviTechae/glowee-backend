@@ -469,7 +469,6 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           .where({ id: transaction.gift_id })
           .update({
             status: "active",
-            updated_at: trx.fn.now(),
           });
 
         const metadata =
