@@ -4,7 +4,7 @@ const authRequired = require("../middleware/authRequired");
 const db = require("../db/knex");
 const { Resend } = require("resend");
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY_GLOWEE);
 
 function topicLabel(topic) {
   const map = {
