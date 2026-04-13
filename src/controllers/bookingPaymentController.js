@@ -33,12 +33,83 @@ async function calculatePaymentSplit(userId, totalAmount) {
 }
 
 /**
+ * Get stamp reward availability for this user + salon
+ */
+async function getStampRewardForSalon(userId, salonId, trx = db) {
+  const card = await trx('user_salon_stamp_cards as c')
+    .leftJoin('salon_stamp_settings as s', function () {
+      this.on('s.salon_id', 'c.salon_id').andOn('s.is_active', '=', trx.raw('true'));
+    })
+    .where('c.user_id', userId)
+    .andWhere('c.salon_id', salonId)
+    .select([
+      'c.user_id',
+      'c.salon_id',
+      'c.available_rewards',
+      's.reward_text',
+    ])
+    .first();
+
+  const availableRewards = Number(card?.available_rewards || 0);
+
+  return {
+    available: availableRewards > 0,
+    available_rewards: availableRewards,
+    reward_text: card?.reward_text || 'Free Service',
+  };
+}
+
+/**
+ * Consume 1 stamp reward for booking
+ */
+async function consumeStampRewardForBooking({ userId, salonId, bookingId, trx }) {
+  const card = await trx('user_salon_stamp_cards')
+    .where({
+      user_id: userId,
+      salon_id: salonId,
+    })
+    .forUpdate()
+    .first();
+
+  if (!card || Number(card.available_rewards || 0) <= 0) {
+    throw new Error('No available stamp reward');
+  }
+
+  const nextRewards = Number(card.available_rewards || 0) - 1;
+
+  await trx('user_salon_stamp_cards')
+    .where({
+      user_id: userId,
+      salon_id: salonId,
+    })
+    .update({
+      available_rewards: nextRewards,
+      updated_at: trx.fn.now(),
+    });
+
+  await trx('salon_stamp_events').insert({
+    user_id: userId,
+    salon_id: salonId,
+    booking_id: bookingId,
+    type: 'reward_used',
+    value: 1,
+    created_at: trx.fn.now(),
+  });
+
+  return {
+    ok: true,
+    available_rewards: nextRewards,
+  };
+}
+
+/**
  * POST /bookings/:id/pay
  *
  * Body:
  * {
  *   "payment_method": "wallet" | "card" | "split",
- *   "use_wallet": true/false
+ *   "use_wallet": true/false,
+ *   "use_stamp_reward": true/false
  * }
  */
 const payForBooking = async (req, res, next) => {
@@ -46,7 +117,7 @@ const payForBooking = async (req, res, next) => {
 
   try {
     const { id: bookingId } = req.params;
-    const { payment_method, use_wallet } = req.body;
+    const { payment_method, use_wallet, use_stamp_reward } = req.body;
     const userId = req.user.sub;
 
     const booking = await trx('bookings')
@@ -69,6 +140,60 @@ const payForBooking = async (req, res, next) => {
     if (!user) {
       await trx.rollback();
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // OPTION 0: STAMP REWARD
+    if (use_stamp_reward === true) {
+      const stampReward = await getStampRewardForSalon(userId, booking.salon_id, trx);
+
+      if (!stampReward.available) {
+        await trx.rollback();
+        return res.status(400).json({
+          error: 'No available stamp reward',
+        });
+      }
+
+      await consumeStampRewardForBooking({
+        userId,
+        salonId: booking.salon_id,
+        bookingId,
+        trx,
+      });
+
+      await trx('bookings')
+        .where({ id: bookingId })
+        .update({
+          status: 'confirmed',
+          updated_at: trx.fn.now(),
+        });
+
+      await trx('payment_transactions').insert({
+        user_id: userId,
+        provider: 'wallet', // نخليه wallet مؤقتًا لأن enum عندك ما يدعم stamp_reward
+        type: 'booking_payment',
+        status: 'succeeded',
+        amount_aed: 0,
+        fee_aed: 0,
+        net_amount_aed: 0,
+        booking_id: bookingId,
+        payment_method_type: 'stamp_reward',
+        succeeded_at: trx.fn.now(),
+        metadata: {
+          stamp_reward: true,
+          reward_text: stampReward.reward_text,
+        },
+        created_at: trx.fn.now(),
+        updated_at: trx.fn.now(),
+      });
+
+      await trx.commit();
+
+      return res.json({
+        ok: true,
+        used_stamp_reward: true,
+        booking_id: bookingId,
+        status: 'confirmed',
+      });
     }
 
     // OPTION 1: WALLET ONLY
@@ -205,7 +330,12 @@ const payForBooking = async (req, res, next) => {
         split.card_amount,
         user.phone,
         user.name,
-        user.email
+        user.email,
+        {
+          split_payment: true,
+          wallet_amount: split.wallet_amount,
+          card_amount: split.card_amount,
+        }
       );
 
       if (!ziinaResult.ok) {
@@ -274,6 +404,7 @@ const getPaymentOptions = async (req, res, next) => {
 
     const totalAmount = Number(booking.total_aed);
     const split = await calculatePaymentSplit(userId, totalAmount);
+    const stampReward = await getStampRewardForSalon(userId, booking.salon_id);
 
     const options = {
       total_amount: totalAmount,
@@ -321,6 +452,11 @@ const getPaymentOptions = async (req, res, next) => {
     return res.json({
       ok: true,
       ...options,
+      stamp_reward: {
+        available: stampReward.available,
+        available_rewards: stampReward.available_rewards,
+        reward_text: stampReward.reward_text,
+      },
     });
   } catch (error) {
     next(error);
