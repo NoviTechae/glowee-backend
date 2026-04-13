@@ -124,6 +124,7 @@ app.use("/health", require("./routes/health"));
 // Mobile OTP auth
 app.use("/auth", require("./routes/auth"));
 app.use(require("./routes/meAccount"));
+app.use(require("./routes/meProfile"));
 
 app.use("/users", require("./routes/users"));
 app.use("/notifications", require("./routes/notifications"));
@@ -162,8 +163,6 @@ app.use('/payments', require("./routes/payments"));
 app.use("/glowee", require("./routes/gloweePartner"));
 
 app.use("/mobile", require("./routes/publicMobile"));
-
-app.use(require("./src/routes/meProfile"));
 
 const addressesRoutes = require("./routes/addresses");
 app.use("/me/addresses", addressesRoutes);
