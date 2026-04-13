@@ -600,35 +600,39 @@ const getGiftPaymentOptions = async (req, res, next) => {
       });
     }
 
-    if (gift_type === "service") {
-      if (walletBalance >= totalAmount) {
-        options.payment_methods.push({
-          method: "wallet",
-          label: "Pay from Wallet",
-          amount: totalAmount,
-          available: true,
-        });
-      }
+ if (gift_type === "service") {
+  options.payment_methods.push({
+    method: "wallet",
+    label: "Pay from Wallet",
+    amount: Math.min(walletBalance, totalAmount),
+    available: true,
+    note:
+      walletBalance >= totalAmount
+        ? "Wallet can cover the full amount"
+        : walletBalance > 0
+        ? `Use AED ${walletBalance.toFixed(2)} from wallet and complete the rest with card`
+        : "Wallet is empty",
+  });
 
-      options.payment_methods.push({
-        method: "card",
-        label: "Pay with Card/Apple Pay",
-        amount: totalAmount,
-        available: true,
-        providers: ["visa", "mastercard", "mada", "apple_pay", "google_pay"],
-      });
+  options.payment_methods.push({
+    method: "card",
+    label: "Pay with Card/Apple Pay",
+    amount: totalAmount,
+    available: true,
+    providers: ["visa", "mastercard", "mada", "apple_pay", "google_pay"],
+  });
 
-      if (walletBalance > 0 && walletBalance < totalAmount) {
-        options.payment_methods.push({
-          method: "split",
-          label: "Wallet + Card",
-          wallet_amount: walletBalance,
-          card_amount: round2(totalAmount - walletBalance),
-          available: true,
-          description: `Pay AED ${walletBalance.toFixed(2)} from wallet + AED ${(totalAmount - walletBalance).toFixed(2)} with card`,
-        });
-      }
-    }
+  if (walletBalance > 0 && walletBalance < totalAmount) {
+    options.payment_methods.push({
+      method: "split",
+      label: "Wallet + Card",
+      wallet_amount: walletBalance,
+      card_amount: round2(totalAmount - walletBalance),
+      available: true,
+      description: `Pay AED ${walletBalance.toFixed(2)} from wallet + AED ${(totalAmount - walletBalance).toFixed(2)} with card`,
+    });
+  }
+}
 
     return res.json({
       ok: true,
