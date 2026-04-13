@@ -467,69 +467,79 @@ router.get("/ziina/booking/done", async (req, res) => {
   `);
 });
 
-router.get("/ziina/gift/success", async (req, res) => {
+router.get('/ziina/gift/success', async (req, res) => {
   try {
     const giftId = req.query.gift_id || null;
+    const paymentIntentIdFromQuery =
+      req.query.payment_intent_id ||
+      req.query.id ||
+      req.query.payment_intent ||
+      null;
 
-    console.log("Ziina gift success query:", req.query);
-    console.log("Ziina gift success giftId:", giftId);
+    console.log('Ziina gift success query:', req.query);
 
-    if (!giftId) {
-      return res.status(400).send("Missing gift_id");
+    let transaction = null;
+
+    if (paymentIntentIdFromQuery) {
+      transaction = await db('payment_transactions')
+        .where({
+          provider: 'ziina',
+          type: 'gift_purchase',
+          provider_payment_id: paymentIntentIdFromQuery,
+        })
+        .orderBy('created_at', 'desc')
+        .first();
     }
 
-    const transaction = await db("payment_transactions")
-      .where({
-        provider: "ziina",
-        type: "gift_purchase",
-        gift_id: giftId,
-      })
-      .orderBy("created_at", "desc")
-      .first();
-
-    console.log("Ziina gift success transaction from gift_id:", transaction);
+    if (!transaction && giftId) {
+      transaction = await db('payment_transactions')
+        .where({
+          provider: 'ziina',
+          type: 'gift_purchase',
+          gift_id: giftId,
+        })
+        .orderBy('created_at', 'desc')
+        .first();
+    }
 
     if (!transaction?.provider_payment_id) {
-      return res.status(404).send("Gift payment transaction not found");
+      return res.status(404).send('Gift payment transaction not found');
     }
 
     const paymentIntentId = transaction.provider_payment_id;
+
     const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
 
-    console.log("Ziina gift success verify result:", result);
-
     if (!result.ok) {
-      console.error("Ziina gift success verify failed:", result.error);
-      return res.status(400).send("Unable to verify payment");
+      console.error('Ziina gift success verify failed:', result.error);
+      return res.status(400).send('Unable to verify payment');
     }
+
+    const normalizedStatus = String(result.status || '').toLowerCase();
 
     const successStatuses = [
-      "completed",
-      "paid",
-      "succeeded",
-      "success",
-      "successful",
-      "captured",
-      "processed",
-      "requires_capture",
+      'completed',
+      'paid',
+      'succeeded',
+      'success',
+      'successful',
+      'captured',
+      'processed',
+      'requires_capture',
     ];
 
-    const normalizedStatus = String(result.status || "").toLowerCase();
+    if (successStatuses.includes(normalizedStatus)) {
+      const successResult = await ziinaService.handlePaymentIntentSuccess(
+        paymentIntentId,
+        result.raw
+      );
 
-    if (!successStatuses.includes(normalizedStatus)) {
-      return res.status(400).send(`Payment not completed yet (${normalizedStatus || "unknown"})`);
-    }
-
-    const successResult = await ziinaService.handlePaymentIntentSuccess(
-      paymentIntentId,
-      result.raw
-    );
-
-    console.log("Ziina gift success handler result:", successResult);
-
-    if (!successResult.ok && !successResult.already_processed) {
-      console.error("Ziina gift success handler failed:", successResult.error);
-      return res.status(500).send("Failed to activate gift");
+      if (!successResult.ok && !successResult.already_processed) {
+        console.error('Ziina gift success handler failed:', successResult.error);
+        return res.status(500).send('Failed to activate gift');
+      }
+    } else {
+      return res.status(400).send(`Payment not completed yet: ${normalizedStatus}`);
     }
 
     return res.send(`
@@ -567,14 +577,13 @@ router.get("/ziina/gift/success", async (req, res) => {
           <div class="box">
             <h1>Payment successful</h1>
             <p>Your gift has been activated. You can return to Glowee.</p>
-            <p style="margin-top:10px;">Gift ID: ${String(giftId)}</p>
           </div>
         </body>
       </html>
     `);
   } catch (error) {
-    console.error("Ziina gift success redirect error:", error);
-    return res.status(500).send("Server error");
+    console.error('Ziina gift success redirect error:', error);
+    return res.status(500).send('Server error');
   }
 });
 
