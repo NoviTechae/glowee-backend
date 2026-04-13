@@ -107,8 +107,13 @@ exports.getSalons = async (req, res, next) => {
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
-      .groupBy("b.id", "bh.branch_id")
-      .orderBy("b.created_at", "asc");
+      .groupBy(
+        "b.id",
+        "bh.branch_id",
+        "bh.is_closed",
+        "bh.open_time",
+        "bh.close_time"
+      ).orderBy("b.created_at", "asc");
 
     const services = await knex("services as srv")
       .leftJoin("service_categories as cat", "srv.category_id", "cat.id")
@@ -189,8 +194,13 @@ exports.getSalonById = async (req, res, next) => {
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
-      .groupBy("b.id", "bh.branch_id")
-      .orderBy("b.created_at", "asc");
+      .groupBy(
+        "b.id",
+        "bh.branch_id",
+        "bh.is_closed",
+        "bh.open_time",
+        "bh.close_time"
+      ).orderBy("b.created_at", "asc");
 
     const branchIds = branches.map((b) => b.id);
 
@@ -272,8 +282,13 @@ exports.getBranchById = async (req, res, next) => {
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
-      .groupBy("b.id", "bh.branch_id")
-      .first();
+      .groupBy(
+        "b.id",
+        "bh.branch_id",
+        "bh.is_closed",
+        "bh.open_time",
+        "bh.close_time"
+      ).first();
 
     if (!branch) {
       return res.status(404).json({ message: "Branch not found" });
@@ -335,8 +350,13 @@ exports.getBranchesBySalonId = async (req, res, next) => {
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
-      .groupBy("b.id", "bh.branch_id");
-
+      .groupBy(
+        "b.id",
+        "bh.branch_id",
+        "bh.is_closed",
+        "bh.open_time",
+        "bh.close_time"
+      )
     const branchIds = branches.map((b) => b.id);
 
     const hours = await knex("branch_hours")
