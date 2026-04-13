@@ -3,6 +3,7 @@
 const router = require("express").Router();
 const db = require("../db/knex");
 const authRequired = require("../middleware/authRequired");
+const controller = require("../controllers/ratingController");
 
 // =======================================
 // GET /ratings/pending
@@ -106,5 +107,7 @@ router.post("/:bookingId", authRequired, async (req, res, next) => {
     next(e);
   }
 });
+
+router.post("/branches/:branchId/rate", controller.rateBranch);
 
 module.exports = router;
