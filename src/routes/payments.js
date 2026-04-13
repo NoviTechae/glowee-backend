@@ -1,83 +1,30 @@
 // src/routes/payments.js
-
-const router = require('express').Router();
-const { z } = require('zod');
-const authRequired = require('../middleware/authRequired');
-const tapService = require('../services/tap');
-const ziinaService = require('../services/ziina');
-const db = require('../db/knex');
-
-// ========================================
-// WALLET TOPUP
-// ========================================
-
-/**
- * POST /payments/wallet/topup
- * Create Tap payment charge for wallet topup
- */
-// const TapTopupSchema = z.object({
-//   amount_aed: z.number().min(10).max(10000),
-// });
+const router = require("express").Router();
+const { z } = require("zod");
+const authRequired = require("../middleware/authRequired");
+const tapService = require("../services/tap");
+const ziinaService = require("../services/ziina");
+const db = require("../db/knex");
 
 const WalletTopupSchema = z.object({
   amount_aed: z.number().min(10).max(10000),
-  provider: z.enum(['tap', 'ziina']).optional().default('ziina'),
+  provider: z.enum(["tap", "ziina"]).optional().default("ziina"),
 });
 
-// router.post('/wallet/topup', authRequired, async (req, res, next) => {
-//   try {
-//     const { amount_aed } = TapTopupSchema.parse(req.body);
-//     const userId = req.user.sub;
-
-//     // Get user details
-//     const user = await db('users').where({ id: userId }).first();
-
-//     const result = await tapService.createWalletTopupCharge(
-//       userId,
-//       amount_aed,
-//       user.phone,
-//       user.name,
-//       user.email
-//     );
-
-//     if (!result.ok) {
-//       return res.status(400).json({
-//         error: result.error,
-//         code: result.code,
-//       });
-//     }
-
-//     return res.json({
-//       ok: true,
-//       charge_id: result.charge_id,
-//       transaction_id: result.transaction_id,
-//       payment_url: result.payment_url, // Redirect user here
-//       amount: result.amount,
-//       status: result.status,
-//     });
-//   } catch (error) {
-//     next(error);
-//   }
-// });
-
-// ========================================
-// SAVED CARDS
-// ========================================
-
-router.post('/wallet/topup', authRequired, async (req, res, next) => {
+router.post("/wallet/topup", authRequired, async (req, res, next) => {
   try {
     const { amount_aed, provider } = WalletTopupSchema.parse(req.body);
     const userId = req.user.sub;
 
-    const user = await db('users').where({ id: userId }).first();
+    const user = await db("users").where({ id: userId }).first();
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
 
     let result;
 
-    if (provider === 'ziina') {
+    if (provider === "ziina") {
       result = await ziinaService.createWalletTopupPaymentIntent(
         userId,
         amount_aed,
@@ -117,11 +64,7 @@ router.post('/wallet/topup', authRequired, async (req, res, next) => {
   }
 });
 
-/**
- * GET /payments/cards
- * List saved cards for user
- */
-router.get('/cards', authRequired, async (req, res, next) => {
+router.get("/cards", authRequired, async (req, res, next) => {
   try {
     const result = await tapService.listSavedCards(req.user.sub);
 
@@ -138,24 +81,16 @@ router.get('/cards', authRequired, async (req, res, next) => {
   }
 });
 
-// ========================================
-// PAYMENT STATUS
-// ========================================
-
-/**
- * GET /payments/transaction/:id
- * Get payment transaction status
- */
-router.get('/transaction/:id', authRequired, async (req, res, next) => {
+router.get("/transaction/:id", authRequired, async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const transaction = await db('payment_transactions')
+    const transaction = await db("payment_transactions")
       .where({ id, user_id: req.user.sub })
       .first();
 
     if (!transaction) {
-      return res.status(404).json({ error: 'Transaction not found' });
+      return res.status(404).json({ error: "Transaction not found" });
     }
 
     return res.json({
@@ -182,36 +117,32 @@ router.get('/transaction/:id', authRequired, async (req, res, next) => {
   }
 });
 
-/**
- * GET /payments/history
- * Get user's payment history
- */
-router.get('/history', authRequired, async (req, res, next) => {
+router.get("/history", authRequired, async (req, res, next) => {
   try {
     const limit = Math.min(50, Number(req.query.limit || 20));
     const offset = Number(req.query.offset || 0);
 
-    const transactions = await db('payment_transactions')
+    const transactions = await db("payment_transactions")
       .where({ user_id: req.user.sub })
-      .orderBy('created_at', 'desc')
+      .orderBy("created_at", "desc")
       .limit(limit)
       .offset(offset)
       .select([
-        'id',
-        'provider',
-        'type',
-        'status',
-        'amount_aed',
-        'payment_method_type',
-        'card_last4',
-        'card_brand',
-        'created_at',
-        'succeeded_at',
+        "id",
+        "provider",
+        "type",
+        "status",
+        "amount_aed",
+        "payment_method_type",
+        "card_last4",
+        "card_brand",
+        "created_at",
+        "succeeded_at",
       ]);
 
-    const total = await db('payment_transactions')
+    const total = await db("payment_transactions")
       .where({ user_id: req.user.sub })
-      .count('* as count')
+      .count("* as count")
       .first();
 
     return res.json({
@@ -241,72 +172,62 @@ router.get('/history', authRequired, async (req, res, next) => {
   }
 });
 
-// ========================================
-// WEBHOOKS (No auth required)
-// ========================================
-
-/**
- * POST /payments/webhooks/tap
- * Handle Tap payment webhooks
- */
-router.post('/webhooks/tap', async (req, res) => {
+router.post("/webhooks/tap", async (req, res) => {
   try {
-    const { id, status, object } = req.body;
+    const { id, status } = req.body;
 
-    console.log('Tap webhook received:', { id, status, object });
-
-    // Tap webhook statuses:
-    // INITIATED → AUTHORIZED → CAPTURED
-    // or FAILED, CANCELLED
+    console.log("Tap webhook received:", { id, status });
 
     if (!id || !status) {
-      console.error('Invalid Tap webhook payload');
-      return res.status(400).json({ error: 'Invalid payload' });
+      console.error("Invalid Tap webhook payload");
+      return res.status(400).json({ error: "Invalid payload" });
     }
 
-    // Handle different statuses
-    if (status === 'CAPTURED' || status === 'AUTHORIZED') {
+    if (status === "CAPTURED" || status === "AUTHORIZED") {
       const result = await tapService.handlePaymentSuccess(id, req.body);
 
       if (!result.ok && !result.already_processed) {
-        console.error('Tap webhook handler error:', result.error);
+        console.error("Tap webhook handler error:", result.error);
         return res.status(500).json({ error: result.error });
       }
-    } else if (status === 'FAILED' || status === 'CANCELLED' || status === 'DECLINED') {
-      const errorMsg = req.body.response?.message || 'Payment failed';
-      const errorCode = req.body.response?.code || 'unknown';
+    } else if (
+      status === "FAILED" ||
+      status === "CANCELLED" ||
+      status === "DECLINED"
+    ) {
+      const errorMsg = req.body.response?.message || "Payment failed";
+      const errorCode = req.body.response?.code || "unknown";
 
       await tapService.handlePaymentFailed(id, errorMsg, errorCode);
     }
 
     res.json({ received: true });
   } catch (error) {
-    console.error('Tap webhook handling error:', error);
-    res.status(500).json({ error: 'Webhook handler failed' });
+    console.error("Tap webhook handling error:", error);
+    res.status(500).json({ error: "Webhook handler failed" });
   }
 });
 
-
-router.get('/verify/ziina/:paymentIntentId', authRequired, async (req, res, next) => {
+router.get("/verify/ziina/:paymentIntentId", authRequired, async (req, res, next) => {
   try {
     const { paymentIntentId } = req.params;
 
-    const transaction = await db('payment_transactions')
+    const transaction = await db("payment_transactions")
       .where({
         provider_payment_id: paymentIntentId,
-        provider: 'ziina',
+        provider: "ziina",
         user_id: req.user.sub,
       })
       .first();
 
     if (!transaction) {
-      return res.status(404).json({ error: 'Transaction not found' });
+      return res.status(404).json({ error: "Transaction not found" });
     }
 
-    if (transaction.status === 'succeeded') {
+    if (transaction.status === "succeeded") {
       return res.json({
         ok: true,
-        status: 'succeeded',
+        status: "succeeded",
         amount: Number(transaction.amount_aed),
       });
     }
@@ -317,20 +238,22 @@ router.get('/verify/ziina/:paymentIntentId', authRequired, async (req, res, next
       return res.status(400).json({ error: result.error });
     }
 
-    // عدلي أسماء statuses حسب Ziina الحقيقي
     const successStatuses = [
-      'completed',
-      'paid',
-      'succeeded',
-      'success',
-      'successful',
-      'captured',
-      'processed',
-      'requires_capture',
+      "completed",
+      "paid",
+      "succeeded",
+      "success",
+      "successful",
+      "captured",
+      "processed",
+      "requires_capture",
     ];
 
     if (successStatuses.includes(String(result.status).toLowerCase())) {
-      const successResult = await ziinaService.handlePaymentIntentSuccess(paymentIntentId, result.raw);
+      const successResult = await ziinaService.handlePaymentIntentSuccess(
+        paymentIntentId,
+        result.raw
+      );
 
       if (!successResult.ok && !successResult.already_processed) {
         return res.status(500).json({ error: successResult.error });
@@ -338,7 +261,7 @@ router.get('/verify/ziina/:paymentIntentId', authRequired, async (req, res, next
 
       return res.json({
         ok: true,
-        status: 'succeeded',
+        status: "succeeded",
         amount: Number(transaction.amount_aed),
       });
     }
@@ -353,33 +276,26 @@ router.get('/verify/ziina/:paymentIntentId', authRequired, async (req, res, next
   }
 });
 
-/**
- * GET /payments/verify/:chargeId
- * Verify payment status (for frontend polling)
- */
-router.get('/verify/:chargeId', authRequired, async (req, res, next) => {
+router.get("/verify/:chargeId", authRequired, async (req, res, next) => {
   try {
     const { chargeId } = req.params;
 
-    // Find transaction
-    const transaction = await db('payment_transactions')
+    const transaction = await db("payment_transactions")
       .where({ provider_payment_id: chargeId, user_id: req.user.sub })
       .first();
 
     if (!transaction) {
-      return res.status(404).json({ error: 'Transaction not found' });
+      return res.status(404).json({ error: "Transaction not found" });
     }
 
-    // If already succeeded, return
-    if (transaction.status === 'succeeded') {
+    if (transaction.status === "succeeded") {
       return res.json({
         ok: true,
-        status: 'succeeded',
+        status: "succeeded",
         amount: Number(transaction.amount_aed),
       });
     }
 
-    // Check with Tap API
     const result = await tapService.getChargeStatus(chargeId);
 
     if (!result.ok) {
@@ -397,41 +313,41 @@ router.get('/verify/:chargeId', authRequired, async (req, res, next) => {
   }
 });
 
-router.get('/ziina/booking/success', async (req, res) => {
+router.get("/ziina/booking/success", async (req, res) => {
   try {
     const bookingId = req.query.booking_id || null;
 
-    console.log('Ziina booking success query:', req.query);
-    console.log('Ziina booking success bookingId:', bookingId);
+    console.log("Ziina booking success query:", req.query);
+    console.log("Ziina booking success bookingId:", bookingId);
 
     if (!bookingId) {
-      return res.status(400).send('Missing booking_id');
+      return res.status(400).send("Missing booking_id");
     }
 
-    const transaction = await db('payment_transactions')
+    const transaction = await db("payment_transactions")
       .where({
-        provider: 'ziina',
-        type: 'booking_payment',
+        provider: "ziina",
+        type: "booking_payment",
         booking_id: bookingId,
       })
-      .orderBy('created_at', 'desc')
+      .orderBy("created_at", "desc")
       .first();
 
-    console.log('Ziina booking success transaction from booking_id:', transaction);
+    console.log("Ziina booking success transaction from booking_id:", transaction);
 
     if (!transaction?.provider_payment_id) {
-      return res.status(404).send('Booking payment transaction not found');
+      return res.status(404).send("Booking payment transaction not found");
     }
 
     const paymentIntentId = transaction.provider_payment_id;
 
     const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
 
-    console.log('Ziina booking success verify result:', result);
+    console.log("Ziina booking success verify result:", result);
 
     if (!result.ok) {
-      console.error('Ziina booking success verify failed:', result.error);
-      return res.status(400).send('Unable to verify payment');
+      console.error("Ziina booking success verify failed:", result.error);
+      return res.status(400).send("Unable to verify payment");
     }
 
     const successResult = await ziinaService.handlePaymentIntentSuccess(
@@ -439,25 +355,27 @@ router.get('/ziina/booking/success', async (req, res) => {
       result.raw
     );
 
-    console.log('Ziina booking success handler result:', successResult);
+    console.log("Ziina booking success handler result:", successResult);
 
     if (!successResult.ok && !successResult.already_processed) {
-      console.error('Ziina booking success handler failed:', successResult.error);
-      return res.status(500).send('Failed to confirm booking');
+      console.error("Ziina booking success handler failed:", successResult.error);
+      return res.status(500).send("Failed to confirm booking");
     }
 
     return res.redirect(
-      `/payments/ziina/booking/done?booking_id=${encodeURIComponent(String(bookingId))}`
+      `/payments/ziina/booking/done?booking_id=${encodeURIComponent(
+        String(bookingId)
+      )}`
     );
   } catch (error) {
-    console.error('Ziina booking success redirect error:', error);
-    return res.status(500).send('Server error');
+    console.error("Ziina booking success redirect error:", error);
+    return res.status(500).send("Server error");
   }
 });
 
-router.get('/ziina/booking/cancel', async (req, res) => {
+router.get("/ziina/booking/cancel", async (req, res) => {
   try {
-    console.log('Ziina booking cancel query:', req.query);
+    console.log("Ziina booking cancel query:", req.query);
 
     return res.send(`
       <!doctype html>
@@ -499,13 +417,13 @@ router.get('/ziina/booking/cancel', async (req, res) => {
       </html>
     `);
   } catch (error) {
-    console.error('Ziina booking cancel redirect error:', error);
-    return res.status(500).send('Server error');
+    console.error("Ziina booking cancel redirect error:", error);
+    return res.status(500).send("Server error");
   }
 });
 
-router.get('/ziina/booking/done', async (req, res) => {
-  const bookingId = req.query.booking_id || '';
+router.get("/ziina/booking/done", async (req, res) => {
+  const bookingId = req.query.booking_id || "";
 
   return res.send(`
     <!doctype html>
@@ -549,50 +467,69 @@ router.get('/ziina/booking/done', async (req, res) => {
   `);
 });
 
-router.get('/ziina/gift/success', async (req, res) => {
+router.get("/ziina/gift/success", async (req, res) => {
   try {
-    const paymentIntentId =
-      req.query.payment_intent_id ||
-      req.query.id ||
-      req.query.payment_intent ||
-      null;
+    const giftId = req.query.gift_id || null;
 
-    console.log('Ziina gift success query:', req.query);
+    console.log("Ziina gift success query:", req.query);
+    console.log("Ziina gift success giftId:", giftId);
 
-    if (!paymentIntentId) {
-      return res.status(400).send('Missing payment_intent_id');
+    if (!giftId) {
+      return res.status(400).send("Missing gift_id");
     }
 
+    const transaction = await db("payment_transactions")
+      .where({
+        provider: "ziina",
+        type: "gift_purchase",
+        gift_id: giftId,
+      })
+      .orderBy("created_at", "desc")
+      .first();
+
+    console.log("Ziina gift success transaction from gift_id:", transaction);
+
+    if (!transaction?.provider_payment_id) {
+      return res.status(404).send("Gift payment transaction not found");
+    }
+
+    const paymentIntentId = transaction.provider_payment_id;
     const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
 
+    console.log("Ziina gift success verify result:", result);
+
     if (!result.ok) {
-      console.error('Ziina gift success verify failed:', result.error);
-      return res.status(400).send('Unable to verify payment');
+      console.error("Ziina gift success verify failed:", result.error);
+      return res.status(400).send("Unable to verify payment");
     }
 
-    const normalizedStatus = String(result.status || '').toLowerCase();
-
     const successStatuses = [
-      'completed',
-      'paid',
-      'succeeded',
-      'success',
-      'successful',
-      'captured',
-      'processed',
-      'requires_capture',
+      "completed",
+      "paid",
+      "succeeded",
+      "success",
+      "successful",
+      "captured",
+      "processed",
+      "requires_capture",
     ];
 
-    if (successStatuses.includes(normalizedStatus)) {
-      const successResult = await ziinaService.handlePaymentIntentSuccess(
-        paymentIntentId,
-        result.raw
-      );
+    const normalizedStatus = String(result.status || "").toLowerCase();
 
-      if (!successResult.ok && !successResult.already_processed) {
-        console.error('Ziina gift success handler failed:', successResult.error);
-        return res.status(500).send('Failed to activate gift');
-      }
+    if (!successStatuses.includes(normalizedStatus)) {
+      return res.status(400).send(`Payment not completed yet (${normalizedStatus || "unknown"})`);
+    }
+
+    const successResult = await ziinaService.handlePaymentIntentSuccess(
+      paymentIntentId,
+      result.raw
+    );
+
+    console.log("Ziina gift success handler result:", successResult);
+
+    if (!successResult.ok && !successResult.already_processed) {
+      console.error("Ziina gift success handler failed:", successResult.error);
+      return res.status(500).send("Failed to activate gift");
     }
 
     return res.send(`
@@ -630,36 +567,34 @@ router.get('/ziina/gift/success', async (req, res) => {
           <div class="box">
             <h1>Payment successful</h1>
             <p>Your gift has been activated. You can return to Glowee.</p>
+            <p style="margin-top:10px;">Gift ID: ${String(giftId)}</p>
           </div>
         </body>
       </html>
     `);
   } catch (error) {
-    console.error('Ziina gift success redirect error:', error);
-    return res.status(500).send('Server error');
+    console.error("Ziina gift success redirect error:", error);
+    return res.status(500).send("Server error");
   }
 });
 
-router.get('/ziina/gift/cancel', async (req, res) => {
+router.get("/ziina/gift/cancel", async (req, res) => {
   try {
-    console.log('Ziina gift cancel query:', req.query);
-    return res.send('Gift payment cancelled');
+    console.log("Ziina gift cancel query:", req.query);
+    return res.send("Gift payment cancelled");
   } catch (error) {
-    console.error('Ziina gift cancel redirect error:', error);
-    return res.status(500).send('Server error');
+    console.error("Ziina gift cancel redirect error:", error);
+    return res.status(500).send("Server error");
   }
 });
 
-const bookingPayment = require('../controllers/bookingPaymentController');
-const giftPayment = require('../controllers/giftPaymentController');
+const bookingPayment = require("../controllers/bookingPaymentController");
+const giftPayment = require("../controllers/giftPaymentController");
 
-// Booking payments
-router.get('/bookings/:id/payment-options', authRequired, bookingPayment.getPaymentOptions);
-router.post('/bookings/:id/pay', authRequired, bookingPayment.payForBooking);
+router.get("/bookings/:id/payment-options", authRequired, bookingPayment.getPaymentOptions);
+router.post("/bookings/:id/pay", authRequired, bookingPayment.payForBooking);
 
-// Gift payments
-router.get('/gifts/payment-options', authRequired, giftPayment.getGiftPaymentOptions);
-router.post('/gifts/send-with-payment', authRequired, giftPayment.sendGiftWithPayment);
-
+router.get("/gifts/payment-options", authRequired, giftPayment.getGiftPaymentOptions);
+router.post("/gifts/send-with-payment", authRequired, giftPayment.sendGiftWithPayment);
 
 module.exports = router;

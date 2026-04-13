@@ -36,17 +36,25 @@ function buildWalletUrls() {
   };
 }
 
-function buildBookingUrls() {
+function buildBookingUrls(bookingId) {
   return {
-    success_url: `${process.env.API_URL}/payments/ziina/booking/success`,
-    cancel_url: `${process.env.API_URL}/payments/ziina/booking/cancel`,
+    success_url: `${process.env.API_URL}/payments/ziina/booking/success?booking_id=${encodeURIComponent(
+      String(bookingId)
+    )}`,
+    cancel_url: `${process.env.API_URL}/payments/ziina/booking/cancel?booking_id=${encodeURIComponent(
+      String(bookingId)
+    )}`,
   };
 }
 
-function buildGiftUrls() {
+function buildGiftUrls(giftId) {
   return {
-    success_url: `${process.env.API_URL}/payments/ziina/gift/success`,
-    cancel_url: `${process.env.API_URL}/payments/ziina/gift/cancel`,
+    success_url: `${process.env.API_URL}/payments/ziina/gift/success?gift_id=${encodeURIComponent(
+      String(giftId)
+    )}`,
+    cancel_url: `${process.env.API_URL}/payments/ziina/gift/cancel?gift_id=${encodeURIComponent(
+      String(giftId)
+    )}`,
   };
 }
 
@@ -133,13 +141,6 @@ async function createWalletTopupPaymentIntent(
 
 /**
  * Create payment intent for booking payment
- * metadata ممكن يحتوي:
- * {
- *   gift_id,
- *   booking_mode,
- *   salon_id,
- *   source: "gift_redeem"
- * }
  */
 async function createBookingPaymentIntent(
   userId,
@@ -151,14 +152,13 @@ async function createBookingPaymentIntent(
   metadata = {}
 ) {
   try {
-const payload = {
-  amount: Math.round(Number(amountAed) * 100),
-  currency_code: "AED",
-  message: "Glowee · Beauty Booking",
-  success_url: `${process.env.API_URL}/payments/ziina/booking/success?booking_id=${encodeURIComponent(bookingId)}`,
-  cancel_url: `${process.env.API_URL}/payments/ziina/booking/cancel?booking_id=${encodeURIComponent(bookingId)}`,
-  test: false,
-};
+    const payload = {
+      amount: Math.round(Number(amountAed) * 100),
+      currency_code: "AED",
+      message: "Glowee · Beauty Booking",
+      ...buildBookingUrls(bookingId),
+      test: false,
+    };
 
     console.log("Creating Ziina booking payment intent...", {
       bookingId,
@@ -237,11 +237,13 @@ async function createGiftPaymentIntent(
   metadata = {}
 ) {
   try {
+    const giftId = metadata.gift_id || null;
+
     const payload = {
       amount: Math.round(Number(amountAed) * 100),
       currency_code: "AED",
       message: "Glowee Gift Payment",
-      ...buildGiftUrls(),
+      ...buildGiftUrls(giftId),
       test: false,
     };
 
@@ -272,7 +274,7 @@ async function createGiftPaymentIntent(
         fee_aed: 0,
         net_amount_aed: Number(amountAed),
         provider_payment_id: pi.id,
-        gift_id: metadata.gift_id || null,
+        gift_id: giftId,
         metadata: {
           phone: userPhone || null,
           email: userEmail || null,
@@ -445,12 +447,6 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           updated_at: trx.fn.now(),
         });
 
-      const updatedBooking = await trx("bookings")
-        .where({ id: transaction.booking_id })
-        .first();
-
-      console.log("UPDATED BOOKING =>", updatedBooking);
-
       const giftId = existingMetadata?.gift_id || null;
 
       if (giftId) {
@@ -459,7 +455,6 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           .update({
             status: "redeemed",
             redeemed_at: trx.fn.now(),
-            updated_at: trx.fn.now(),
           });
       }
     }
@@ -474,7 +469,6 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           .where({ id: transaction.gift_id })
           .update({
             status: "active",
-            updated_at: trx.fn.now(),
           });
 
         const metadata =
