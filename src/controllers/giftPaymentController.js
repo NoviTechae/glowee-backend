@@ -6,6 +6,8 @@ const { spendWalletBalance, addWalletBalance } = require("./walletController");
 const { addPoints } = require("./rewardController");
 const { sendGiftNotification } = require("../services/whatsapp");
 
+const MIN_CARD_PAYMENT_AED = 2;
+
 function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -397,6 +399,17 @@ const sendGiftWithPayment = async (req, res, next) => {
       const walletAmount = Math.min(walletBalance, totalAmount);
       const cardAmount = round2(totalAmount - walletAmount);
 
+      if (cardAmount < MIN_CARD_PAYMENT_AED) {
+  await trx.rollback();
+  return res.status(400).json({
+    error: `Card portion must be at least ${MIN_CARD_PAYMENT_AED} AED for split payment`,
+    wallet_amount: walletAmount,
+    card_amount: cardAmount,
+    minimum_card_amount: MIN_CARD_PAYMENT_AED,
+    suggestion: "Use full card payment or reduce wallet usage",
+  });
+}
+
       const [gift] = await trx("gifts")
         .insert({
           sender_user_id: userId,
@@ -622,16 +635,20 @@ const getGiftPaymentOptions = async (req, res, next) => {
     providers: ["visa", "mastercard", "mada", "apple_pay", "google_pay"],
   });
 
-  if (walletBalance > 0 && walletBalance < totalAmount) {
+if (walletBalance > 0 && walletBalance < totalAmount) {
+  const splitCardAmount = round2(totalAmount - walletBalance);
+
+  if (splitCardAmount >= MIN_CARD_PAYMENT_AED) {
     options.payment_methods.push({
       method: "split",
       label: "Wallet + Card",
       wallet_amount: walletBalance,
-      card_amount: round2(totalAmount - walletBalance),
+      card_amount: splitCardAmount,
       available: true,
-      description: `Pay AED ${walletBalance.toFixed(2)} from wallet + AED ${(totalAmount - walletBalance).toFixed(2)} with card`,
+      description: `Pay AED ${walletBalance.toFixed(2)} from wallet + AED ${splitCardAmount.toFixed(2)} with card`,
     });
   }
+}
 }
 
     return res.json({
