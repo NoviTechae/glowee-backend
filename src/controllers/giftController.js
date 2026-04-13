@@ -21,7 +21,7 @@ exports.getReceivedCards = async (req, res, next) => {
       .leftJoin("salons as s", "s.id", "g.salon_id")
       .leftJoin("gift_themes as gt", knex.raw('gt.id::text'), 'g.theme_id')
       .where("g.recipient_phone", userPhone)
-        .andWhere("g.status", "succeeded")
+        .andWhere("g.status", ["active", "redeemed"])
       .select([
         "g.id",
         "g.theme_id",
