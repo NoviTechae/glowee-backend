@@ -129,6 +129,7 @@ app.use(require("./routes/meProfile"));
 app.use("/users", require("./routes/users"));
 app.use("/notifications", require("./routes/notifications"));
 app.use("/support", require("./routes/support"));
+router.use("/ratings", require("./ratings"));
 
 // Public browse
 app.use("/salons", require("./routes/salons"));

@@ -15,10 +15,8 @@ function toBool(v) {
   return s === "true" || s === "1" || s === "yes";
 }
 
-// Postgres: 0 Sunday ... 6 Saturday
 const dowRaw = knex.raw("EXTRACT(DOW FROM timezone('Asia/Dubai', now()))::int");
 
-// Computed open_now from today's branch_hours
 function openNowSql() {
   return knex.raw(`
     CASE
@@ -35,31 +33,8 @@ function openNowSql() {
   `);
 }
 
-// function makeHomeBranch(salon) {
-//   return {
-//     id: `home-${salon.id}`,
-//     salon_id: salon.id,
-//     name: salon.name,
-//     city: null,
-//     area: null,
-//     address_line: null,
-//     lat: null,
-//     lng: null,
-//     supports_home_services: true,
-//     rating: null,
-//     reviews_count: null,
-//     today_is_closed: null,
-//     today_open_time: null,
-//     today_close_time: null,
-//     open_now: null,
-//     branch_hours: [],
-//   };
-// }
-
 /**
  * GET /salons
- * Returns paginated salons + branches_count
- * Optionally filters by city and type
  */
 exports.getSalons = async (req, res, next) => {
   try {
@@ -69,7 +44,6 @@ exports.getSalons = async (req, res, next) => {
 
     const city = req.query.city?.toString();
     const type = (req.query.type || "all").toString();
-    // type: all | in_salon | home | both
 
     let salonsQ = knex("salons as s")
       .leftJoin("branches as b", function () {
@@ -87,22 +61,12 @@ exports.getSalons = async (req, res, next) => {
         "s.is_featured",
         "s.discount_percent",
         "s.double_stamps",
-        // ✅ home نخليه 1 حتى UI يكون منطقي
         knex.raw(`CASE WHEN s.salon_type = 'home' THEN 1 ELSE COUNT(b.id) END as branches_count`)
       );
 
     if (type === "home") salonsQ = salonsQ.andWhere("s.salon_type", "home");
     else if (type === "in_salon") salonsQ = salonsQ.andWhere("s.salon_type", "in_salon");
     else if (type === "both") salonsQ = salonsQ.andWhere("s.salon_type", "both");
-
-    // فلاتر اختيارية
-    const featured = req.query.featured?.toString();
-    const doubleStamps = req.query.double_stamps?.toString();
-    const hasDiscount = req.query.has_discount?.toString();
-
-    if (featured === "true") salonsQ = salonsQ.andWhere("s.is_featured", true);
-    if (doubleStamps === "true") salonsQ = salonsQ.andWhere("s.double_stamps", true);
-    if (hasDiscount === "true") salonsQ = salonsQ.andWhereNotNull("s.discount_percent").andWhere("s.discount_percent", ">", 0);
 
     if (city) {
       salonsQ = salonsQ.andWhere(function () {
@@ -111,42 +75,40 @@ exports.getSalons = async (req, res, next) => {
     }
 
     const salons = await salonsQ.limit(limit).offset(offset).orderBy("s.created_at", "desc");
-
     const salonIds = salons.map((s) => s.id);
 
     if (salonIds.length === 0) {
       return res.json({ page, limit, data: [] });
     }
 
-    // ✅ نجيب فروع فقط للصالونات اللي مو home
-    const branches = salonIds.length
-      ? await knex("branches as b")
-        .join("salons as s", "s.id", "b.salon_id")
-        .leftJoin("branch_hours as bh", function () {
-          this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
-        })
-        .whereIn("b.salon_id", salonIds)
-        .andWhere("b.is_active", true)
-        .andWhere("s.is_active", true)
-        .select([
-          "b.id",
-          "b.salon_id",
-          "b.name",
-          "b.city",
-          "b.area",
-          "b.address_line",
-          "b.lat",
-          "b.lng",
-          "b.supports_home_services",
-          "b.rating",
-          "b.reviews_count",
-          "bh.is_closed as today_is_closed",
-          "bh.open_time as today_open_time",
-          "bh.close_time as today_close_time",
-          openNowSql(),
-        ])
-        .orderBy("b.created_at", "asc")
-      : [];
+    const branches = await knex("branches as b")
+      .join("salons as s", "s.id", "b.salon_id")
+      .leftJoin("branch_hours as bh", function () {
+        this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
+      })
+      .leftJoin("booking_ratings as r", "r.branch_id", "b.id")
+      .whereIn("b.salon_id", salonIds)
+      .andWhere("b.is_active", true)
+      .andWhere("s.is_active", true)
+      .select([
+        "b.id",
+        "b.salon_id",
+        "b.name",
+        "b.city",
+        "b.area",
+        "b.address_line",
+        "b.lat",
+        "b.lng",
+        "b.supports_home_services",
+        knex.raw(`COALESCE(AVG(r.rating), 0)::decimal(3,2) as rating`),
+        knex.raw(`COUNT(r.id)::int as reviews_count`),
+        "bh.is_closed as today_is_closed",
+        "bh.open_time as today_open_time",
+        "bh.close_time as today_close_time",
+        openNowSql(),
+      ])
+      .groupBy("b.id", "bh.branch_id")
+      .orderBy("b.created_at", "asc");
 
     const services = await knex("services as srv")
       .leftJoin("service_categories as cat", "srv.category_id", "cat.id")
@@ -190,8 +152,6 @@ exports.getSalons = async (req, res, next) => {
 
 /**
  * GET /salons/:id
- * Returns salon + branches + services
- * Also returns full branch_hours per branch (7 rows if exists)
  */
 exports.getSalonById = async (req, res, next) => {
   try {
@@ -209,6 +169,7 @@ exports.getSalonById = async (req, res, next) => {
       .leftJoin("branch_hours as bh", function () {
         this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
       })
+      .leftJoin("booking_ratings as r", "r.branch_id", "b.id")
       .where({ "b.salon_id": salonId })
       .andWhere("b.is_active", true)
       .select([
@@ -221,26 +182,25 @@ exports.getSalonById = async (req, res, next) => {
         "b.lat",
         "b.lng",
         "b.supports_home_services",
-        "b.rating",
-        "b.reviews_count",
+        knex.raw(`COALESCE(AVG(r.rating), 0)::decimal(3,2) as rating`),
+        knex.raw(`COUNT(r.id)::int as reviews_count`),
         "bh.is_closed as today_is_closed",
         "bh.open_time as today_open_time",
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
+      .groupBy("b.id", "bh.branch_id")
       .orderBy("b.created_at", "asc");
 
     const branchIds = branches.map((b) => b.id);
 
-    const hours = branchIds.length
-      ? await knex("branch_hours")
-        .whereIn("branch_id", branchIds)
-        .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
-        .orderBy([
-          { column: "branch_id", order: "asc" },
-          { column: "day_of_week", order: "asc" },
-        ])
-      : [];
+    const hours = await knex("branch_hours")
+      .whereIn("branch_id", branchIds)
+      .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
+      .orderBy([
+        { column: "branch_id", order: "asc" },
+        { column: "day_of_week", order: "asc" },
+      ]);
 
     const hoursByBranch = new Map();
     for (const h of hours) {
@@ -273,9 +233,7 @@ exports.getSalonById = async (req, res, next) => {
         name: s.name,
         description: s.description,
         image_url: s.image_url,
-        category: s.category_id
-          ? { id: s.category_id, name: s.category_name }
-          : null,
+        category: s.category_id ? { id: s.category_id, name: s.category_name } : null,
       })),
     });
   } catch (err) {
@@ -285,7 +243,6 @@ exports.getSalonById = async (req, res, next) => {
 
 /**
  * GET /salons/:salonId/branches/:branchId
- * Returns { salon, branch } with computed open_now and full branch_hours
  */
 exports.getBranchById = async (req, res, next) => {
   try {
@@ -303,15 +260,19 @@ exports.getBranchById = async (req, res, next) => {
       .leftJoin("branch_hours as bh", function () {
         this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
       })
+      .leftJoin("booking_ratings as r", "r.branch_id", "b.id")
       .where({ "b.id": branchId, "b.salon_id": salonId })
       .andWhere("b.is_active", true)
       .select([
         "b.*",
+        knex.raw(`COALESCE(AVG(r.rating), 0)::decimal(3,2) as rating`),
+        knex.raw(`COUNT(r.id)::int as reviews_count`),
         "bh.is_closed as today_is_closed",
         "bh.open_time as today_open_time",
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
+      .groupBy("b.id", "bh.branch_id")
       .first();
 
     if (!branch) {
@@ -337,7 +298,6 @@ exports.getBranchById = async (req, res, next) => {
 
 /**
  * GET /salons/:salonId/branches
- * Returns branches for one salon (with computed open_now + full branch_hours)
  */
 exports.getBranchesBySalonId = async (req, res, next) => {
   try {
@@ -355,6 +315,7 @@ exports.getBranchesBySalonId = async (req, res, next) => {
       .leftJoin("branch_hours as bh", function () {
         this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
       })
+      .leftJoin("booking_ratings as r", "r.branch_id", "b.id")
       .where({ "b.salon_id": salonId })
       .andWhere("b.is_active", true)
       .select([
@@ -367,26 +328,24 @@ exports.getBranchesBySalonId = async (req, res, next) => {
         "b.lat",
         "b.lng",
         "b.supports_home_services",
-        "b.rating",
-        "b.reviews_count",
+        knex.raw(`COALESCE(AVG(r.rating), 0)::decimal(3,2) as rating`),
+        knex.raw(`COUNT(r.id)::int as reviews_count`),
         "bh.is_closed as today_is_closed",
         "bh.open_time as today_open_time",
         "bh.close_time as today_close_time",
         openNowSql(),
       ])
-      .orderBy("b.created_at", "asc");
+      .groupBy("b.id", "bh.branch_id");
 
     const branchIds = branches.map((b) => b.id);
 
-    const hours = branchIds.length
-      ? await knex("branch_hours")
-        .whereIn("branch_id", branchIds)
-        .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
-        .orderBy([
-          { column: "branch_id", order: "asc" },
-          { column: "day_of_week", order: "asc" },
-        ])
-      : [];
+    const hours = await knex("branch_hours")
+      .whereIn("branch_id", branchIds)
+      .select("branch_id", "day_of_week", "is_closed", "open_time", "close_time")
+      .orderBy([
+        { column: "branch_id", order: "asc" },
+        { column: "day_of_week", order: "asc" },
+      ]);
 
     const hoursByBranch = new Map();
     for (const h of hours) {
@@ -409,7 +368,6 @@ exports.getBranchesBySalonId = async (req, res, next) => {
 
 /**
  * POST /salons/:salonId/branches
- * Creates branch (public/old route) — kept for compatibility
  */
 exports.createBranch = async (req, res, next) => {
   try {
@@ -431,16 +389,8 @@ exports.createBranch = async (req, res, next) => {
       is_active,
     } = req.body;
 
-    if (!name || !String(name).trim()) return res.status(400).json({ message: "Branch name is required" });
-    if (!city || !String(city).trim()) return res.status(400).json({ message: "City is required" });
-    if (!area || !String(area).trim()) return res.status(400).json({ message: "Area is required" });
-    if (lat == null || lng == null) return res.status(400).json({ message: "lat and lng are required" });
-
     const latNum = Number(lat);
     const lngNum = Number(lng);
-    if (Number.isNaN(latNum) || Number.isNaN(lngNum)) {
-      return res.status(400).json({ message: "lat/lng must be numbers" });
-    }
 
     const [inserted] = await knex("branches")
       .insert({
@@ -458,23 +408,7 @@ exports.createBranch = async (req, res, next) => {
         created_at: knex.fn.now(),
         updated_at: knex.fn.now(),
       })
-      .returning([
-        "id",
-        "salon_id",
-        "name",
-        "country",
-        "city",
-        "area",
-        "address_line",
-        "lat",
-        "lng",
-        "supports_home_services",
-        "rating",
-        "reviews_count",
-        "is_active",
-        "created_at",
-        "updated_at",
-      ]);
+      .returning("*");
 
     return res.status(201).json({ branch: inserted, branch_hours: [] });
   } catch (err) {
@@ -489,40 +423,11 @@ exports.updateBranch = async (req, res, next) => {
     const exists = await knex("branches").where({ id: branchId, salon_id: salonId }).first("id");
     if (!exists) return res.status(404).json({ message: "Branch not found" });
 
-    const patch = {};
-    const allowed = [
-      "name",
-      "country",
-      "city",
-      "area",
-      "address_line",
-      "supports_home_services",
-      "is_active",
-      "lat",
-      "lng",
-    ];
-
-    for (const k of allowed) {
-      if (req.body[k] !== undefined) patch[k] = req.body[k];
-    }
-
-    if (patch.name != null) patch.name = String(patch.name).trim();
-    if (patch.city != null) patch.city = String(patch.city).trim();
-    if (patch.area != null) patch.area = String(patch.area).trim();
-    if (patch.country != null) patch.country = String(patch.country).trim();
-    if (patch.address_line != null) patch.address_line = String(patch.address_line).trim();
-
-    if (patch.supports_home_services != null) patch.supports_home_services = toBool(patch.supports_home_services);
-    if (patch.is_active != null) patch.is_active = toBool(patch.is_active);
-
-    if (patch.lat != null) patch.lat = Number(patch.lat);
-    if (patch.lng != null) patch.lng = Number(patch.lng);
+    const patch = { ...req.body, updated_at: knex.fn.now() };
 
     if (patch.lat != null && patch.lng != null) {
       patch.geo = knex.raw("ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography", [patch.lng, patch.lat]);
     }
-
-    patch.updated_at = knex.fn.now();
 
     const [updated] = await knex("branches").where({ id: branchId }).update(patch).returning("*");
 

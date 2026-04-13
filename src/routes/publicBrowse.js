@@ -29,8 +29,10 @@ router.get("/branches", async (req, res, next) => {
         "b.lat",
         "b.lng",
         "b.supports_home_services",
-        "b.rating",
-        "b.reviews_count",
+
+        db.raw(`COALESCE(AVG(r.rating), 0)::decimal(3,2) as rating`),
+        db.raw(`COUNT(r.id)::int as reviews_count`),
+
         "s.id as salon_id",
         "s.name as salon_name",
         "s.logo_url",
@@ -41,23 +43,22 @@ router.get("/branches", async (req, res, next) => {
         "s.discount_percent",
         "s.double_stamps",
 
-        // ✅ ساعات اليوم
         "bh.is_closed as today_is_closed",
         "bh.open_time as today_open_time",
         "bh.close_time as today_close_time",
 
-        // ✅ حالة مفتوح الآن (حسب اليوم + الوقت)
         db.raw(`
-          CASE
-            WHEN bh.branch_id IS NULL THEN NULL
-            WHEN bh.is_closed = true THEN false
-            WHEN bh.open_time IS NULL OR bh.close_time IS NULL THEN false
-            WHEN (NOW()::time >= bh.open_time AND NOW()::time < bh.close_time) THEN true
-            ELSE false
-          END as is_open_now
-        `),
+    CASE
+      WHEN bh.branch_id IS NULL THEN NULL
+      WHEN bh.is_closed = true THEN false
+      WHEN bh.open_time IS NULL OR bh.close_time IS NULL THEN false
+      WHEN (NOW()::time >= bh.open_time AND NOW()::time < bh.close_time) THEN true
+      ELSE false
+    END as is_open_now
+  `),
       ])
-      .orderBy("b.created_at", "desc");
+      .leftJoin("booking_ratings as r", "r.branch_id", "b.id")
+      .groupBy("b.id", "s.id", "bh.branch_id")
 
     if (type === "home") q.andWhere("b.supports_home_services", true);
     else q.andWhere("b.supports_home_services", false);
