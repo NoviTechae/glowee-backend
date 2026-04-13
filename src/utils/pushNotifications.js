@@ -1,100 +1,123 @@
 // backend/src/utils/pushNotifications.js
 const db = require("../db/knex");
 
-/**
- * إرسال push notification عبر Expo Push Service
- */
+function isExpoPushToken(pushToken) {
+  return (
+    !!pushToken &&
+    (pushToken.startsWith("ExponentPushToken[") || pushToken.startsWith("ExpoPushToken["))
+  );
+}
+
+async function removePushToken(pushToken) {
+  try {
+    await db("users").where({ push_token: pushToken }).update({
+      push_token: null,
+      push_token_updated_at: db.fn.now(),
+    });
+
+    console.log("✅ Invalid push token removed from database");
+  } catch (error) {
+    console.error("❌ Error removing push token:", error);
+  }
+}
+
 async function sendPushNotification(pushToken, title, body, data = {}) {
-  // Validate token
-  if (!pushToken || (!pushToken.startsWith('ExponentPushToken[') && 
-                      !pushToken.startsWith('ExpoPushToken['))) {
-    console.log('⚠️ Invalid push token format:', pushToken);
+  if (!isExpoPushToken(pushToken)) {
+    console.log("⚠️ Invalid push token format:", pushToken);
     return null;
   }
 
   const message = {
     to: pushToken,
-    sound: 'default',
+    sound: "default",
     title,
     body,
     data,
     badge: 1,
-    priority: 'high',
-    channelId: 'default',
+    priority: "high",
+    channelId: "default",
   };
 
   try {
-    const response = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
+    const response = await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
       headers: {
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
+        Accept: "application/json",
+        "Accept-Encoding": "gzip, deflate",
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(message),
     });
 
-    const result = await response.json();
-    
-    if (result.data && result.data[0]) {
-      const status = result.data[0].status;
-      
-      if (status === 'error') {
-        console.error('❌ Push notification error:', result.data[0].message);
-        
-        // إذا كان الـ token غير صالح، احذفه من الـ database
-        if (result.data[0].details?.error === 'DeviceNotRegistered') {
-          await removePushToken(pushToken);
-        }
-        
-        return null;
+    const result = await response.json().catch(() => ({}));
+
+    const ticket = Array.isArray(result?.data) ? result.data[0] : result?.data || result;
+
+    if (ticket?.status === "error") {
+      console.error("❌ Push notification error:", ticket?.message || "Unknown Expo push error");
+
+      if (ticket?.details?.error === "DeviceNotRegistered") {
+        await removePushToken(pushToken);
       }
-      
-      console.log('✅ Push notification sent successfully:', status);
-      return result;
+
+      return null;
     }
 
+    console.log("✅ Push notification sent successfully");
     return result;
   } catch (error) {
-    console.error('❌ Error sending push notification:', error.message);
+    console.error("❌ Error sending push notification:", error?.message || error);
     return null;
   }
 }
 
-/**
- * إرسال push notifications متعددة (Batch)
- */
 async function sendPushNotifications(messages) {
   try {
-    const response = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
+    const validMessages = (messages || []).filter((msg) => isExpoPushToken(msg?.to));
+
+    if (!validMessages.length) {
+      console.log("⚠️ No valid Expo push tokens found in batch");
+      return null;
+    }
+
+    const response = await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
       headers: {
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate',
-        'Content-Type': 'application/json',
+        Accept: "application/json",
+        "Accept-Encoding": "gzip, deflate",
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify(messages),
+      body: JSON.stringify(validMessages),
     });
 
-    const result = await response.json();
-    console.log('✅ Batch push notifications sent:', result.data?.length || 0);
+    const result = await response.json().catch(() => ({}));
+
+    if (Array.isArray(result?.data)) {
+      for (let i = 0; i < result.data.length; i++) {
+        const item = result.data[i];
+        const originalMessage = validMessages[i];
+
+        if (item?.status === "error") {
+          console.error("❌ Batch push error:", item?.message || "Unknown Expo push error");
+
+          if (item?.details?.error === "DeviceNotRegistered" && originalMessage?.to) {
+            await removePushToken(originalMessage.to);
+          }
+        }
+      }
+    }
+
+    console.log("✅ Batch push notifications sent:", validMessages.length);
     return result;
   } catch (error) {
-    console.error('❌ Error sending batch push notifications:', error);
+    console.error("❌ Error sending batch push notifications:", error?.message || error);
     return null;
   }
 }
 
-/**
- * إرسال إشعار لمستخدم معين
- */
 async function notifyUser(userId, title, body, data = {}) {
   try {
-    // الحصول على push token من الـ database
-    const user = await db('users')
-      .where({ id: userId })
-      .select('push_token')
-      .first();
+    const user = await db("users").where({ id: userId }).select("push_token").first();
 
     if (!user?.push_token) {
       console.log(`⚠️ No push token for user ${userId}`);
@@ -103,61 +126,40 @@ async function notifyUser(userId, title, body, data = {}) {
 
     return await sendPushNotification(user.push_token, title, body, data);
   } catch (error) {
-    console.error('❌ Error notifying user:', error);
+    console.error("❌ Error notifying user:", error);
     return null;
   }
 }
 
-/**
- * إرسال إشعار لعدة مستخدمين
- */
 async function notifyMultipleUsers(userIds, title, body, data = {}) {
   try {
-    // الحصول على push tokens
-    const users = await db('users')
-      .whereIn('id', userIds)
-      .whereNotNull('push_token')
-      .select('push_token');
+    const users = await db("users")
+      .whereIn("id", userIds)
+      .whereNotNull("push_token")
+      .select("push_token");
 
-    if (users.length === 0) {
-      console.log('⚠️ No users with push tokens found');
+    if (!users.length) {
+      console.log("⚠️ No users with push tokens found");
       return null;
     }
 
-    // إنشاء messages للـ batch
-    const messages = users.map(user => ({
-      to: user.push_token,
-      sound: 'default',
-      title,
-      body,
-      data,
-      badge: 1,
-      priority: 'high',
-      channelId: 'default',
-    }));
+    const messages = users
+      .filter((user) => isExpoPushToken(user.push_token))
+      .map((user) => ({
+        to: user.push_token,
+        sound: "default",
+        title,
+        body,
+        data,
+        badge: 1,
+        priority: "high",
+        channelId: "default",
+      }));
 
     return await sendPushNotifications(messages);
   } catch (error) {
-    console.error('❌ Error notifying multiple users:', error);
+    console.error("❌ Error notifying multiple users:", error);
     return null;
-  }
-}
-
-/**
- * حذف push token من الـ database
- */
-async function removePushToken(pushToken) {
-  try {
-    await db('users')
-      .where({ push_token: pushToken })
-      .update({ 
-        push_token: null,
-        push_token_updated_at: db.fn.now(),
-      });
-    
-    console.log('✅ Invalid push token removed from database');
-  } catch (error) {
-    console.error('❌ Error removing push token:', error);
   }
 }
 
@@ -166,4 +168,5 @@ module.exports = {
   sendPushNotifications,
   notifyUser,
   notifyMultipleUsers,
+  removePushToken,
 };
