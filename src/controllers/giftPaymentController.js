@@ -38,12 +38,17 @@ function calculateServiceItemsSubtotal(items = []) {
 }
 
 function getGiftFeeAed(giftType, subtotal) {
-  const configured = toNum(process.env.GIFT_FEE_AED || 0);
-
   if (subtotal <= 0) return 0;
 
-  // إذا تبين مستقبلاً تفرقين بين money / service تقدرين هنا
-  return round2(configured);
+  if (giftType === "money") {
+    return 3.95;
+  }
+
+  if (giftType === "service") {
+    return 1.95;
+  }
+
+  return 0;
 }
 
 function calculateGiftTotals({ gift_type, amount_aed, service_items }) {
