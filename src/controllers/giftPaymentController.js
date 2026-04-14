@@ -180,10 +180,10 @@ const sendGiftWithPayment = async (req, res, next) => {
       theme_id === "birthday"
         ? "🎂"
         : theme_id === "wedding"
-        ? "💍"
-        : theme_id === "anniversary"
-        ? "💐"
-        : "🎁";
+          ? "💍"
+          : theme_id === "anniversary"
+            ? "💐"
+            : "🎁";
 
     // ========================================
     // 1) WALLET ONLY (service gifts only)
@@ -215,6 +215,9 @@ const sendGiftWithPayment = async (req, res, next) => {
           recipient_phone,
           salon_id: salon_id || null,
           amount_aed: totalAmount,
+          subtotal_aed: subtotalAmount,
+          gift_fee_aed: giftFeeAmount,
+          total_aed: totalAmount,
           code: giftCode,
           expires_at: expiresAt,
           message: message || null,
@@ -307,6 +310,9 @@ const sendGiftWithPayment = async (req, res, next) => {
           recipient_phone,
           salon_id: salon_id || null,
           amount_aed: totalAmount,
+          subtotal_aed: subtotalAmount,
+          gift_fee_aed: giftFeeAmount,
+          total_aed: totalAmount,
           code: giftCode,
           expires_at: expiresAt,
           message: message || null,
@@ -405,15 +411,15 @@ const sendGiftWithPayment = async (req, res, next) => {
       const cardAmount = round2(totalAmount - walletAmount);
 
       if (cardAmount < MIN_CARD_PAYMENT_AED) {
-  await trx.rollback();
-  return res.status(400).json({
-    error: `Card portion must be at least ${MIN_CARD_PAYMENT_AED} AED for split payment`,
-    wallet_amount: walletAmount,
-    card_amount: cardAmount,
-    minimum_card_amount: MIN_CARD_PAYMENT_AED,
-    suggestion: "Use full card payment or reduce wallet usage",
-  });
-}
+        await trx.rollback();
+        return res.status(400).json({
+          error: `Card portion must be at least ${MIN_CARD_PAYMENT_AED} AED for split payment`,
+          wallet_amount: walletAmount,
+          card_amount: cardAmount,
+          minimum_card_amount: MIN_CARD_PAYMENT_AED,
+          suggestion: "Use full card payment or reduce wallet usage",
+        });
+      }
 
       const [gift] = await trx("gifts")
         .insert({
@@ -421,6 +427,9 @@ const sendGiftWithPayment = async (req, res, next) => {
           recipient_phone,
           salon_id: salon_id || null,
           amount_aed: totalAmount,
+          subtotal_aed: subtotalAmount,
+          gift_fee_aed: giftFeeAmount,
+          total_aed: totalAmount,
           code: giftCode,
           expires_at: expiresAt,
           message: message || null,
@@ -553,7 +562,7 @@ const sendGiftWithPayment = async (req, res, next) => {
   } catch (error) {
     try {
       await trx.rollback();
-    } catch {}
+    } catch { }
     next(error);
   }
 };
@@ -618,43 +627,43 @@ const getGiftPaymentOptions = async (req, res, next) => {
       });
     }
 
- if (gift_type === "service") {
-  options.payment_methods.push({
-    method: "wallet",
-    label: "Pay from Wallet",
-    amount: Math.min(walletBalance, totalAmount),
-    available: true,
-    note:
-      walletBalance >= totalAmount
-        ? "Wallet can cover the full amount"
-        : walletBalance > 0
-        ? `Use AED ${walletBalance.toFixed(2)} from wallet and complete the rest with card`
-        : "Wallet is empty",
-  });
+    if (gift_type === "service") {
+      options.payment_methods.push({
+        method: "wallet",
+        label: "Pay from Wallet",
+        amount: Math.min(walletBalance, totalAmount),
+        available: true,
+        note:
+          walletBalance >= totalAmount
+            ? "Wallet can cover the full amount"
+            : walletBalance > 0
+              ? `Use AED ${walletBalance.toFixed(2)} from wallet and complete the rest with card`
+              : "Wallet is empty",
+      });
 
-  options.payment_methods.push({
-    method: "card",
-    label: "Pay with Card/Apple Pay",
-    amount: totalAmount,
-    available: true,
-    providers: ["visa", "mastercard", "mada", "apple_pay", "google_pay"],
-  });
+      options.payment_methods.push({
+        method: "card",
+        label: "Pay with Card/Apple Pay",
+        amount: totalAmount,
+        available: true,
+        providers: ["visa", "mastercard", "mada", "apple_pay", "google_pay"],
+      });
 
-if (walletBalance > 0 && walletBalance < totalAmount) {
-  const splitCardAmount = round2(totalAmount - walletBalance);
+      if (walletBalance > 0 && walletBalance < totalAmount) {
+        const splitCardAmount = round2(totalAmount - walletBalance);
 
-  if (splitCardAmount >= MIN_CARD_PAYMENT_AED) {
-    options.payment_methods.push({
-      method: "split",
-      label: "Wallet + Card",
-      wallet_amount: walletBalance,
-      card_amount: splitCardAmount,
-      available: true,
-      description: `Pay AED ${walletBalance.toFixed(2)} from wallet + AED ${splitCardAmount.toFixed(2)} with card`,
-    });
-  }
-}
-}
+        if (splitCardAmount >= MIN_CARD_PAYMENT_AED) {
+          options.payment_methods.push({
+            method: "split",
+            label: "Wallet + Card",
+            wallet_amount: walletBalance,
+            card_amount: splitCardAmount,
+            available: true,
+            description: `Pay AED ${walletBalance.toFixed(2)} from wallet + AED ${splitCardAmount.toFixed(2)} with card`,
+          });
+        }
+      }
+    }
 
     return res.json({
       ok: true,
