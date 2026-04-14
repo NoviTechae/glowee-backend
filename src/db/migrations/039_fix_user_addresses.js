@@ -1,3 +1,4 @@
+// src/db/migrations/039_fix_user_addresses.js
 exports.up = async (knex) => {
   await knex.raw(`CREATE EXTENSION IF NOT EXISTS "postgis";`);
 

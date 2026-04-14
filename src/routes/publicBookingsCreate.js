@@ -8,24 +8,30 @@ const authRequired = require("../middleware/authRequired");
 const BodySchema = z
   .object({
     mode: z.enum(["in_salon", "home"]),
-  start_iso: z.string(),
-  staff_id: z.string().uuid().nullable().optional(),
-  items: z.array(
-    z.object({
-      availability_id: z.string().uuid(),
-      qty: z.number().int().min(1),
-    })
-  ).min(1),
+    start_iso: z.string(),
+    staff_id: z.string().uuid().nullable().optional(),
+    items: z.array(
+      z.object({
+        availability_id: z.string().uuid(),
+        qty: z.number().int().min(1),
+      })
+    ).min(1),
 
-  contact_name: z.string().optional(),
-  contact_phone: z.string().optional(),
-  area: z.string().optional(),
-  address_line1: z.string().optional(),
-  address_line2: z.string().optional(),
-  location_note: z.string().optional(),
+    contact_name: z.string().optional(),
+    contact_phone: z.string().optional(),
+    area: z.string().optional(),
+    address_line1: z.string().optional(),
+    address_line2: z.string().optional(),
+    location_note: z.string().optional(),
 
-  gift_id: z.string().uuid().optional(),
-  redeem_mode: z.enum(["gift"]).optional(),
+    latitude: z.number().optional(),
+    longitude: z.number().optional(),
+    map_label: z.string().optional(),
+    house_number: z.string().optional(),
+    street_name: z.string().optional(),
+
+    gift_id: z.string().uuid().optional(),
+    redeem_mode: z.enum(["gift"]).optional(),
   })
   .strict();
 
@@ -44,8 +50,8 @@ function getUaeMinutes(date) {
     hour12: false,
   }).formatToParts(date);
 
-  const hour = Number(parts.find(p => p.type === "hour").value);
-  const minute = Number(parts.find(p => p.type === "minute").value);
+  const hour = Number(parts.find((p) => p.type === "hour").value);
+  const minute = Number(parts.find((p) => p.type === "minute").value);
 
   return hour * 60 + minute;
 }
@@ -55,8 +61,8 @@ function withinWorkingHours(open_time, close_time, startDate, endDate) {
   const closeM = parseHHMMToMinutes(close_time);
   if (openM == null || closeM == null) return false;
 
-  const sM = getUaeMinutes(startDate); // ✅ FIX
-  const eM = getUaeMinutes(endDate);   // ✅ FIX
+  const sM = getUaeMinutes(startDate);
+  const eM = getUaeMinutes(endDate);
 
   if (closeM < openM) {
     const startOk = sM >= openM || sM <= closeM;
@@ -67,33 +73,42 @@ function withinWorkingHours(open_time, close_time, startDate, endDate) {
   return sM >= openM && eM <= closeM;
 }
 
-router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async (req, res, next) => {  const trx = await db.transaction();
+router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async (req, res, next) => {
+  const trx = await db.transaction();
 
   try {
     const { salonId, branchId } = req.params;
     const body = BodySchema.parse(req.body);
 
     if (body.mode === "home") {
-  if (!body.contact_name?.trim()) {
-    await trx.rollback();
-    return res.status(400).json({ error: "contact_name is required for home bookings" });
-  }
+      if (!body.contact_name?.trim()) {
+        await trx.rollback();
+        return res.status(400).json({ error: "contact_name is required for home bookings" });
+      }
 
-  if (!body.contact_phone?.trim()) {
-    await trx.rollback();
-    return res.status(400).json({ error: "contact_phone is required for home bookings" });
-  }
+      if (!body.contact_phone?.trim()) {
+        await trx.rollback();
+        return res.status(400).json({ error: "contact_phone is required for home bookings" });
+      }
 
-  if (!body.area?.trim()) {
-    await trx.rollback();
-    return res.status(400).json({ error: "area is required for home bookings" });
-  }
+      if (!body.area?.trim()) {
+        await trx.rollback();
+        return res.status(400).json({ error: "area is required for home bookings" });
+      }
 
-  if (!body.address_line1?.trim()) {
-    await trx.rollback();
-    return res.status(400).json({ error: "address_line1 is required for home bookings" });
-  }
-}
+      if (!body.address_line1?.trim()) {
+        await trx.rollback();
+        return res.status(400).json({ error: "address_line1 is required for home bookings" });
+      }
+
+      if (
+        typeof body.latitude !== "number" ||
+        typeof body.longitude !== "number"
+      ) {
+        await trx.rollback();
+        return res.status(400).json({ error: "latitude and longitude are required for home bookings" });
+      }
+    }
 
     const start = new Date(String(body.start_iso));
     if (Number.isNaN(start.getTime())) {
@@ -101,8 +116,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       return res.status(400).json({ error: "Invalid start_iso" });
     }
 
-    // 1) branch hours
-    const dow = start.getDay(); // 0..6
+    const dow = start.getDay();
     const hourRow = await trx("branch_hours")
       .where({ branch_id: branchId, day_of_week: dow })
       .first();
@@ -112,7 +126,6 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       return res.status(400).json({ error: "Branch is closed on that day" });
     }
 
-    // 2) Validate all availability rows + compute totals
     const availabilityIds = body.items.map((x) => x.availability_id);
 
     const saRows = await trx("service_availability as sa")
@@ -158,24 +171,20 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
 
       if (body.mode === "home") {
         const travel = Number(r.travel_fee_aed || 0);
-        fees += travel * qty; // إذا تبينها مرة واحدة لكل booking قوليلي
+        fees += travel * qty;
       }
     }
 
     const end = new Date(start.getTime() + totalDuration * 60 * 1000);
 
-    // 3) Validate within working hours
     const okHours = withinWorkingHours(hourRow.open_time, hourRow.close_time, start, end);
     if (!okHours) {
       await trx.rollback();
       return res.status(400).json({ error: "Selected time is outside working hours" });
     }
 
-    // 4) Staff selection
     const serviceIds = Array.from(new Set(saRows.map((r) => r.service_id)));
-
-    // ✅ الحالات اللي تعتبر مشغولة (حسب enum عندك)
-    const ACTIVE_STATUSES = ["pending", "confirmed"]; // لا تضيفين "paid" لأن enum ما فيه paid
+    const ACTIVE_STATUSES = ["pending", "confirmed"];
 
     async function staffIsFree(staffId) {
       const overlap = await trx("booking_item_assignments as bia")
@@ -194,7 +203,6 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     let chosenStaffId = body.staff_id ?? null;
 
     if (chosenStaffId) {
-      // ✅ لازم تكون في نفس الفرع من staff.branch_id
       const stRow = await trx("staff as st")
         .join("branch_staff as bs", "bs.staff_id", "st.id")
         .where("st.id", chosenStaffId)
@@ -209,7 +217,6 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
         return res.status(400).json({ error: "Staff not in this branch" });
       }
 
-      // لازم تقدم كل خدمات السلة
       const cntRow = await trx("staff_services")
         .where("staff_id", chosenStaffId)
         .whereIn("service_id", serviceIds)
@@ -227,7 +234,6 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
         return res.status(400).json({ error: "Staff not available for that time" });
       }
     } else {
-      // ✅ Any staff: من نفس الفرع + عندها كل الخدمات + بدون overlap
       const candidates = await trx("staff as st")
         .join("branch_staff as bs", "bs.staff_id", "st.id")
         .join("staff_services as ss", "ss.staff_id", "st.id")
@@ -244,7 +250,10 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       let found = null;
       for (const c of candidates) {
         const free = await staffIsFree(c.id);
-        if (free) { found = c; break; }
+        if (free) {
+          found = c;
+          break;
+        }
       }
 
       if (!found) {
@@ -256,9 +265,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     }
 
     const total = subtotal + fees;
-
-    // 5) Create booking
-const userId = req.user.sub;
+    const userId = req.user.sub;
 
     const [booking] = await trx("bookings")
       .insert({
@@ -271,16 +278,65 @@ const userId = req.user.sub;
         subtotal_aed: subtotal,
         fees_aed: fees,
         total_aed: total,
-        customer_note: body.customer_note ?? null,
+        customer_note: body.location_note ?? null,
         created_at: trx.fn.now(),
         updated_at: trx.fn.now(),
       })
       .returning("*");
 
-    // 6) Create booking_items + assignments
+    // ✅ حفظ العنوان تلقائياً بعد إنشاء الحجز المنزلي
+    if (body.mode === "home") {
+      const latNum = Number(body.latitude);
+      const lngNum = Number(body.longitude);
+
+      const addressLine = [
+        body.house_number ? `House ${String(body.house_number).trim()}` : null,
+        body.street_name ? String(body.street_name).trim() : null,
+        body.address_line1 ? String(body.address_line1).trim() : null,
+        body.address_line2 ? String(body.address_line2).trim() : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+
+      const existingAddress = await trx("user_addresses")
+        .where({ user_id: userId })
+        .andWhere("lat", latNum)
+        .andWhere("lng", lngNum)
+        .first();
+
+      if (existingAddress) {
+        await trx("user_addresses")
+          .where({ id: existingAddress.id })
+          .update({
+            city: body.map_label?.trim() || "UAE",
+            area: String(body.area || "").trim(),
+            address_line: addressLine,
+            geo: trx.raw(
+              "ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography",
+              [lngNum, latNum]
+            ),
+          });
+      } else {
+        await trx("user_addresses").insert({
+          user_id: userId,
+          label: "Home",
+          city: body.map_label?.trim() || "UAE",
+          area: String(body.area || "").trim(),
+          address_line: addressLine,
+          lat: latNum,
+          lng: lngNum,
+          geo: trx.raw(
+            "ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography",
+            [lngNum, latNum]
+          ),
+          is_default: false,
+          created_at: trx.fn.now(),
+        });
+      }
+    }
+
     for (const r of saRows) {
       const qty = Number(itemsById.get(r.availability_id) || 1);
-
       const unit = Number(r.price_aed || 0);
       const lineTotal = unit * qty;
       const duration = Number(r.duration_mins || 0);
@@ -288,12 +344,12 @@ const userId = req.user.sub;
       const [bi] = await trx("booking_items")
         .insert({
           booking_id: booking.id,
-          service_id: r.service_id, // ✅ REQUIRED
+          service_id: r.service_id,
           service_availability_id: r.availability_id,
-          service_name_snapshot: r.service_name, // ✅ correct column
-          price_aed_snapshot: unit, // ✅ correct column
-          duration_min_snapshot: duration, // ✅ correct column
-          duration_mins: duration, // ✅ since your table also has this column
+          service_name_snapshot: r.service_name,
+          price_aed_snapshot: unit,
+          duration_min_snapshot: duration,
+          duration_mins: duration,
           qty,
           line_total_aed: lineTotal,
           created_at: trx.fn.now(),
@@ -329,7 +385,7 @@ const userId = req.user.sub;
   } catch (e) {
     try {
       await trx.rollback();
-    } catch { }
+    } catch {}
     next(e);
   }
 });
