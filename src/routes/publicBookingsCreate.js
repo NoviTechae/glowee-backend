@@ -10,6 +10,7 @@ const BodySchema = z
     mode: z.enum(["in_salon", "home"]),
     start_iso: z.string(),
     staff_id: z.string().uuid().nullable().optional(),
+
     items: z.array(
       z.object({
         availability_id: z.string().uuid(),
@@ -19,16 +20,24 @@ const BodySchema = z
 
     contact_name: z.string().optional(),
     contact_phone: z.string().optional(),
+
+    city: z.string().optional(),
     area: z.string().optional(),
+
     address_line1: z.string().optional(),
     address_line2: z.string().optional(),
-    location_note: z.string().optional(),
 
-    latitude: z.number().optional(),
-    longitude: z.number().optional(),
-    map_label: z.string().optional(),
     house_number: z.string().optional(),
     street_name: z.string().optional(),
+
+    latitude: z.number().nullable().optional(),
+    longitude: z.number().nullable().optional(),
+
+    map_label: z.string().optional(),
+    selected_address_id: z.string().uuid().optional(),
+
+    location_note: z.string().optional(),
+    customer_note: z.string().optional(),
 
     gift_id: z.string().uuid().optional(),
     redeem_mode: z.enum(["gift"]).optional(),
