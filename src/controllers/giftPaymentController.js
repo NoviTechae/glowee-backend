@@ -41,11 +41,11 @@ function getGiftFeeAed(giftType, subtotal) {
   if (subtotal <= 0) return 0;
 
   if (giftType === "money") {
-    return 3.95;
+    return 4.95;
   }
 
   if (giftType === "service") {
-    return 1.95;
+    return 3.95;
   }
 
   return 0;
