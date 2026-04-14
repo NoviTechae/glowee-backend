@@ -173,7 +173,7 @@ app.use("/glowee", require("./routes/gloweePartner"));
 app.use("/mobile", require("./routes/publicMobile"));
 
 const addressesRoutes = require("./routes/addresses");
-app.use("/me/addresses", addressesRoutes);
+app.use("/addresses", addressesRoutes);
 
 // Dashboard
 app.use("/dashboard/auth", require("./routes/dashboardAuth"));
