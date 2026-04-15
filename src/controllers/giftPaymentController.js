@@ -129,8 +129,8 @@ const sendGiftWithPayment = async (req, res, next) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    if (!recipient_phone) {
-      await trx.rollback();
+if (!normalizedRecipientPhone) {
+        await trx.rollback();
       return res.status(400).json({ error: "recipient_phone is required" });
     }
 
@@ -232,7 +232,7 @@ const sendGiftWithPayment = async (req, res, next) => {
           sender_user_id: userId,
           recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
-          amount_aed: totalAmount,
+amount_aed: subtotalAmount,
           subtotal_aed: subtotalAmount,
           gift_fee_aed: giftFeeAmount,
           total_aed: totalAmount,
@@ -307,7 +307,7 @@ const sendGiftWithPayment = async (req, res, next) => {
         receiver.id,
         gift.id,
         safeSenderName,
-        totalAmount
+        subtotalAmount
       );
     }
   } catch (err) {
@@ -345,7 +345,7 @@ const sendGiftWithPayment = async (req, res, next) => {
           sender_user_id: userId,
           recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
-          amount_aed: totalAmount,
+amount_aed: subtotalAmount,
           subtotal_aed: subtotalAmount,
           gift_fee_aed: giftFeeAmount,
           total_aed: totalAmount,
@@ -462,7 +462,7 @@ const sendGiftWithPayment = async (req, res, next) => {
           sender_user_id: userId,
           recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
-          amount_aed: totalAmount,
+amount_aed: subtotalAmount,
           subtotal_aed: subtotalAmount,
           gift_fee_aed: giftFeeAmount,
           total_aed: totalAmount,
