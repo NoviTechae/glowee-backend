@@ -5,6 +5,7 @@ const ziinaService = require("../services/ziina");
 const { spendWalletBalance, addWalletBalance } = require("./walletController");
 const { addPoints } = require("./rewardController");
 const { sendGiftNotification } = require("../services/whatsapp");
+const { notifyGiftReceived } = require("../utils/notifications");
 
 const MIN_CARD_PAYMENT_AED = 2;
 
@@ -119,6 +120,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       salon_id,
     } = req.body;
 
+    const normalizedRecipientPhone = normalizeUAEPhone(recipient_phone);
     const userId = req.user.sub;
     const user = await trx("users").where({ id: userId }).first();
 
@@ -180,7 +182,7 @@ const sendGiftWithPayment = async (req, res, next) => {
         valid_methods: ["wallet", "card", "split"],
       });
     }
-
+ 
     const { v4: uuidv4 } = require("uuid");
     const giftCode = uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase();
     const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
@@ -228,7 +230,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       const [gift] = await trx("gifts")
         .insert({
           sender_user_id: userId,
-          recipient_phone,
+          recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
           amount_aed: totalAmount,
           subtotal_aed: subtotalAmount,
@@ -265,7 +267,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       await spendWalletBalance(
         userId,
         totalAmount,
-        `Gift sent to ${recipient_phone}`,
+        `Gift sent to ${normalizedRecipientPhone}`,
         gift.id,
         "gift_sent",
         trx
@@ -294,9 +296,27 @@ const sendGiftWithPayment = async (req, res, next) => {
       });
 
       await trx.commit();
+    setImmediate(async () => {
+  try {
+    const receiver = await db("users")
+      .where({ phone: normalizedRecipientPhone })
+      .first("id");
+
+    if (receiver) {
+      await notifyGiftReceived(
+        receiver.id,
+        gift.id,
+        safeSenderName,
+        totalAmount
+      );
+    }
+  } catch (err) {
+    console.error("Gift push notification failed:", err?.message || err);
+  }
+});
 
       setImmediate(() => {
-        sendGiftNotification(recipient_phone, {
+        sendGiftNotification(normalizedRecipientPhone, {
           code: giftCode,
           senderName: safeSenderName,
           giftType: salon_id ? "service" : "wallet",
@@ -323,7 +343,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       const [gift] = await trx("gifts")
         .insert({
           sender_user_id: userId,
-          recipient_phone,
+          recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
           amount_aed: totalAmount,
           subtotal_aed: subtotalAmount,
@@ -362,7 +382,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       const ziinaResult = await ziinaService.createGiftPaymentIntent(
         userId,
         totalAmount,
-        recipient_phone,
+        normalizedRecipientPhone,
         user.phone,
         user.name,
         user.email,
@@ -440,7 +460,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       const [gift] = await trx("gifts")
         .insert({
           sender_user_id: userId,
-          recipient_phone,
+          recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
           amount_aed: totalAmount,
           subtotal_aed: subtotalAmount,
@@ -477,7 +497,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       await spendWalletBalance(
         userId,
         walletAmount,
-        `Partial gift payment to ${recipient_phone}`,
+        `Partial gift payment to ${normalizedRecipientPhone}`,
         gift.id,
         "gift_sent",
         trx
@@ -511,7 +531,7 @@ const sendGiftWithPayment = async (req, res, next) => {
       const ziinaResult = await ziinaService.createGiftPaymentIntent(
         userId,
         cardAmount,
-        recipient_phone,
+        normalizedRecipientPhone,
         user.phone,
         user.name,
         user.email,
