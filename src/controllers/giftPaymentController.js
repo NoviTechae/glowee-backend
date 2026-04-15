@@ -17,6 +17,22 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+function normalizeUAEPhone(input) {
+  let p = String(input || '').trim().replace(/\s+/g, '');
+
+  if (p.startsWith('00')) p = '+' + p.slice(2);
+
+  if (/^05\d{8}$/.test(p)) return '+971' + p.slice(1);
+
+  if (/^5\d{8}$/.test(p)) return '+971' + p;
+
+  if (/^\+9710\d{8}$/.test(p)) return '+971' + p.slice(5);
+
+  if (/^\+9715\d{8}$/.test(p)) return p;
+
+  return p;
+}
+
 function calculateServiceItemsSubtotal(items = []) {
   let subtotal = 0;
 
