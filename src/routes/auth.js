@@ -160,19 +160,27 @@ const VerifyOtpSchema = z.object({
 // ---------- Rate limiters ----------
 const OTP_REQUEST_LIMITER_IP = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10, // per IP
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    const normPhone = normalizeUAEPhone(req.body?.phone);
+    return isAppleReviewDemoPhone(normPhone);
+  },
 });
 
 const OTP_REQUEST_LIMITER_PHONE = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5, // per phone (keyed by normalized phone)
+  max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
     const phoneRaw = req.body?.phone;
     return normalizeUAEPhone(phoneRaw);
+  },
+  skip: (req) => {
+    const normPhone = normalizeUAEPhone(req.body?.phone);
+    return isAppleReviewDemoPhone(normPhone);
   },
 });
 
@@ -193,20 +201,14 @@ router.post(
       }
 
       // Apple Review demo phone: skip Twilio and return normal success
-      if (isAppleReviewDemoPhone(normPhone)) {
-        await db('otp_codes').insert({
-          phone: normPhone,
-          code_hash: 'apple_review_demo',
-          expires_at: new Date(Date.now() + 30 * 60 * 1000),
-          attempts: 0,
-        });
-
-        return res.json({
-          ok: true,
-          expires_in_sec: 1800,
-          demo: true,
-        });
-      }
+ if (isAppleReviewDemoPhone(normPhone)) {
+  return res.json({
+    ok: true,
+    expires_in_sec: 1800,
+    demo: true,
+    dev_code: APPLE_REVIEW_DEMO_CODE,
+  });
+}
 
       // anti-spam: max 3 OTP requests in last 5 mins per phone
       const recent = await db('otp_codes')
