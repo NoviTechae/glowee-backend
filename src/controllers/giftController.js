@@ -147,13 +147,10 @@ exports.getAvailableGifts = async (req, res, next) => {
 
         preview_title:
           r.type === "gift_card"
-            ? `${Number(r.amount_aed).toFixed(2)} AED`
+            ? `${Number(r.amount_aed).toFixed(0)} AED`
             : firstItem?.service_name || "Service Gift",
 
-        preview_subtitle:
-          r.type === "gift_card"
-            ? "Wallet Gift"
-            : r.merchant_name,
+        preview_subtitle: null,
 
         preview_image_url:
           null, // أو firstItem?.service_image_url || null إذا أضفتيه
