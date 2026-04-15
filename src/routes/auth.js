@@ -13,26 +13,11 @@ if (!JWT_SECRET || JWT_SECRET === 'change_me') {
   throw new Error('JWT_SECRET is required and must not be "change_me"');
 }
 
-if (
-  phone === APPLE_REVIEW_DEMO_PHONE &&
-  otp === APPLE_REVIEW_DEMO_CODE
-) {
-  // bypass twilio completely
+const APPLE_REVIEW_DEMO_PHONE = '+971500000000';
+const APPLE_REVIEW_DEMO_CODE = '123456';
 
-  let user = await db('users').where({ phone }).first();
-
-  if (!user) {
-    user = await db('users')
-      .insert({ phone })
-      .returning('*')
-      .then(r => r[0]);
-  }
-
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, {
-    expiresIn: '30d',
-  });
-
-  return res.json({ token, user });
+function isAppleReviewDemoPhone(phone) {
+  return phone === APPLE_REVIEW_DEMO_PHONE;
 }
 
 // ---------- Helpers ----------
