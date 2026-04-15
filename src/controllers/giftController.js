@@ -74,6 +74,8 @@ exports.getReceivedCards = async (req, res, next) => {
       expires_at: r.expires_at,
       redeemed_at: r.redeemed_at,
       amount_aed: Number(r.amount_aed),
+      display_title: `${Number(r.amount_aed).toFixed(0)} AED`,
+      display_subtitle: null,
     }));
 
     res.json({ ok: true, data });
