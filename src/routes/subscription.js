@@ -3,12 +3,12 @@ const express = require("express");
 const router = express.Router();
 
 // middleware auth (نفس اللي تستخدمه في dashboard)
-const requireAuth = require("../middleware/requireAuth");
+const dashboardAuthRequired = require("../middleware/dashboardAuthRequired");
 
 // =========================
 // GET current subscription
 // =========================
-router.get("/dashboard/salon/subscription", requireAuth, async (req, res) => {
+router.get("/dashboard/salon/subscription", dashboardAuthRequired, async (req, res) => {
   try {
     // مؤقت (بعدين نربطه DB)
     res.json({
@@ -25,7 +25,7 @@ router.get("/dashboard/salon/subscription", requireAuth, async (req, res) => {
 // =========================
 // SUBSCRIBE
 // =========================
-router.post("/dashboard/salon/subscription/subscribe", requireAuth, async (req, res) => {
+router.post("/dashboard/salon/subscription/subscribe", dashboardAuthRequired, async (req, res) => {
   try {
     const { plan } = req.body;
 
@@ -42,7 +42,7 @@ router.post("/dashboard/salon/subscription/subscribe", requireAuth, async (req, 
 // =========================
 // CANCEL
 // =========================
-router.post("/dashboard/salon/subscription/cancel", requireAuth, async (req, res) => {
+router.post("/dashboard/salon/subscription/cancel", dashboardAuthRequired, async (req, res) => {
   try {
     res.json({
       ok: true,
