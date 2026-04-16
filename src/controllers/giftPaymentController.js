@@ -129,8 +129,8 @@ const sendGiftWithPayment = async (req, res, next) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-if (!normalizedRecipientPhone) {
-        await trx.rollback();
+    if (!normalizedRecipientPhone) {
+      await trx.rollback();
       return res.status(400).json({ error: "recipient_phone is required" });
     }
 
@@ -182,7 +182,7 @@ if (!normalizedRecipientPhone) {
         valid_methods: ["wallet", "card", "split"],
       });
     }
- 
+
     const { v4: uuidv4 } = require("uuid");
     const giftCode = uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase();
     const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
@@ -232,7 +232,7 @@ if (!normalizedRecipientPhone) {
           sender_user_id: userId,
           recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
-amount_aed: subtotalAmount,
+          amount_aed: subtotalAmount,
           subtotal_aed: subtotalAmount,
           gift_fee_aed: giftFeeAmount,
           total_aed: totalAmount,
@@ -296,35 +296,44 @@ amount_aed: subtotalAmount,
       });
 
       await trx.commit();
-    setImmediate(async () => {
-  try {
-    const receiver = await db("users")
-      .where({ phone: normalizedRecipientPhone })
-      .first("id");
+      setImmediate(async () => {
+        try {
+          const receiver = await db("users")
+            .where({ phone: normalizedRecipientPhone })
+            .first("id");
 
-    if (receiver) {
-      await notifyGiftReceived(
-        receiver.id,
-        gift.id,
-        safeSenderName,
-        subtotalAmount
-      );
-    }
-  } catch (err) {
-    console.error("Gift push notification failed:", err?.message || err);
-  }
-});
+          if (receiver) {
+            await notifyGiftReceived(
+              receiver.id,
+              gift.id,
+              safeSenderName,
+              subtotalAmount
+            );
+          }
+        } catch (err) {
+          console.error("Gift push notification failed:", err?.message || err);
+        }
+      });
 
-      setImmediate(() => {
-        sendGiftNotification(normalizedRecipientPhone, {
-          code: giftCode,
-          senderName: safeSenderName,
-          giftType: salon_id ? "service" : "wallet",
-          merchantName: salonName,
-          themeEmoji,
-        }).catch((err) => {
+      setImmediate(async () => {
+        try {
+          const receiverUserData = await db("users")
+            .where({ phone: normalizedRecipientPhone })
+            .first("name");
+
+          await sendGiftNotification(normalizedRecipientPhone, {
+            receiverName: receiverUserData?.name || "there",
+            senderName: safeSenderName,
+            giftLink: `${process.env.GLOWEE_WEB_BASE_URL}/gift/${gift.id}`,
+            expiryText: new Date(gift.expires_at).toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            }),
+          });
+        } catch (err) {
           console.error("Gift WhatsApp failed (wallet flow):", err?.message || err);
-        });
+        }
       });
 
       return res.json({
@@ -345,7 +354,7 @@ amount_aed: subtotalAmount,
           sender_user_id: userId,
           recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
-amount_aed: subtotalAmount,
+          amount_aed: subtotalAmount,
           subtotal_aed: subtotalAmount,
           gift_fee_aed: giftFeeAmount,
           total_aed: totalAmount,
@@ -462,7 +471,7 @@ amount_aed: subtotalAmount,
           sender_user_id: userId,
           recipient_phone: normalizedRecipientPhone,
           salon_id: salon_id || null,
-amount_aed: subtotalAmount,
+          amount_aed: subtotalAmount,
           subtotal_aed: subtotalAmount,
           gift_fee_aed: giftFeeAmount,
           total_aed: totalAmount,

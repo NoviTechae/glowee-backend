@@ -490,20 +490,19 @@ exports.sendGift = async (req, res, next) => {
 
       setImmediate(async () => {
         try {
-          await sendGiftNotification(gift.recipient_phone, {
-            code: gift.code,
-            senderName: finalSenderName || "Someone special",
-            giftType: finalSalonId ? "service" : "wallet",
-            merchantName: salonName || null,
+          const receiverUserData = await knex("users")
+            .where({ phone: gift.recipient_phone })
+            .first("name");
 
-            themeEmoji:
-              finalThemeId === "birthday"
-                ? "🎂"
-                : finalThemeId === "wedding"
-                  ? "💍"
-                  : finalThemeId === "anniversary"
-                    ? "💐"
-                    : "🎁",
+          await sendGiftNotification(gift.recipient_phone, {
+            receiverName: receiverUserData?.name || "there",
+            senderName: finalSenderName || "Someone special",
+            giftLink: `${process.env.GLOWEE_WEB_BASE_URL}/gift/${gift.id}`,
+            expiryText: new Date(gift.expires_at).toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            }),
           });
         } catch (e) {
           console.error("WhatsApp send failed (non-blocking):", e.message);

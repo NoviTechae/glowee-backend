@@ -512,12 +512,19 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
 
         setImmediate(async () => {
           try {
+            const receiverUserData = await db("users")
+              .where({ phone: recipientPhone })
+              .first("name");
+
             await sendGiftNotification(recipientPhone, {
-              code: giftCode,
+              receiverName: receiverUserData?.name || "there",
               senderName,
-              giftType,
-              merchantName,
-              themeEmoji,
+              giftLink: `${process.env.GLOWEE_WEB_BASE_URL}/gift/${gift.id}`,
+              expiryText: new Date(gift.expires_at).toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              }),
             });
           } catch (e) {
             console.error("Gift WhatsApp failed after Ziina success:", e?.message || e);
