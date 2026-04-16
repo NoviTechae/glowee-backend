@@ -179,7 +179,7 @@ app.use("/addresses", addressesRoutes);
 // Dashboard
 app.use("/dashboard/auth", require("./routes/dashboardAuth"));
 app.use("/dashboard", require("./routes/dashboard"));
-
+app.use(require("./routes/subscription"));
 // ===== ERROR HANDLERS =====
 
 // 404 handler - Route not found
