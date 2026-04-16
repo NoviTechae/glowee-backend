@@ -86,10 +86,8 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['X-Total-Count', 'X-Page-Count']
 }));
-
-// ✅ IMPORTANT
-app.options('*', cors());
 
 
 // 5. Body parsing with size limits
