@@ -53,31 +53,30 @@ app.use(
 );
 
 // 4. CORS - SECURE: Only allow specific origins
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
+const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
   : [
-   "http://localhost:3000",        // Dashboard (Next.js)
-      "http://127.0.0.1:3000",        // Dashboard
-      "http://172.20.10.7:3000",      // ✅ Dashboard on LAN (THIS IS THE FIX)
+    "http://localhost:3000",        // Dashboard (Next.js)
+    "http://127.0.0.1:3000",        // Dashboard
+    "http://172.20.10.7:3000",      // ✅ Dashboard on LAN (THIS IS THE FIX)
 
-      "http://localhost:8081",        // Expo dev (sometimes)
-      "http://127.0.0.1:8081",
-      "http://localhost:19006",       // Expo web (if used)
-      "http://127.0.0.1:19006",
+    "http://localhost:8081",        // Expo dev (sometimes)
+    "http://127.0.0.1:8081",
+    "http://localhost:19006",       // Expo web (if used)
+    "http://127.0.0.1:19006",
 
-     "http://3.122.60.25:4000",
-      "capacitor://localhost",        // iOS app (if used)
-      "http://localhost",             // Android app
-      // Add your production domains when ready:
-      // 'https://glowee.app',
-      // 'https://admin.glowee.app',
-    ];
+    "http://3.122.60.25:4000",
+    "capacitor://localhost",        // iOS app (if used)
+    "http://localhost",             // Android app
+    "https://glowee.novitech.ae",
+    "https://glowee-dashboard.vercel.app",
+  ];
 
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, Postman, curl, etc.)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -206,12 +205,12 @@ app.use((err, req, res, next) => {
 
   // Determine if we're in production
   const isProd = process.env.NODE_ENV === 'production';
-  
+
   // Send appropriate error response to client
   const statusCode = err.status || err.statusCode || 500;
-  
+
   res.status(statusCode).json({
-    error: isProd 
+    error: isProd
       ? (statusCode === 500 ? 'Internal server error' : err.message)
       : err.message,
     // Only include these in development
