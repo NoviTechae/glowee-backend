@@ -89,8 +89,9 @@ async function sendTemplateMessage({
     });
 
     return {
-      ok: true,
+      ok: false,
       mode: "dev",
+      error: "WhatsApp is disabled",
       to,
       templateName,
     };

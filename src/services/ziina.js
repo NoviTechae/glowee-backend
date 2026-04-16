@@ -3,6 +3,7 @@ const axios = require("axios");
 const db = require("../db/knex");
 const crypto = require("crypto");
 const { sendGiftNotification } = require("./whatsapp");
+const { sendGiftSms } = require("./sms");
 
 const ZIINA_API_URL = "https://api-v2.ziina.com/api";
 const ZIINA_API_KEY = (process.env.ZIINA_API_KEY || "").trim();
@@ -516,7 +517,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
               .where({ phone: recipientPhone })
               .first("name");
 
-            await sendGiftNotification(recipientPhone, {
+            const payload = {
               receiverName: receiverUserData?.name || "there",
               senderName,
               giftLink: `${process.env.GLOWEE_WEB_BASE_URL}/gift/${gift.id}`,
@@ -525,9 +526,24 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
                 month: "short",
                 year: "numeric",
               }),
-            });
+            };
+
+            const waResult = await sendGiftNotification(recipientPhone, payload);
+
+            if (!waResult?.ok) {
+              console.warn("WhatsApp failed, falling back to SMS:", waResult?.error);
+
+              const smsResult = await sendGiftSms(recipientPhone, payload);
+
+              if (!smsResult?.ok) {
+                console.error("Gift SMS also failed:", smsResult?.error);
+              }
+            }
           } catch (e) {
-            console.error("Gift WhatsApp failed after Ziina success:", e?.message || e);
+            console.error(
+              "Gift notification flow failed after Ziina success:",
+              e?.message || e
+            );
           }
         });
 
