@@ -4,7 +4,7 @@ const router = express.Router();
 const { sendGiftSms } = require("../services/sms");
 
 router.get("/test-sms", async (req, res) => {
-  const result = await sendGiftSms("+971553502011", {
+  const result = await sendGiftSms("+971558198862", {
     receiverName: "meme",
     senderName: "Glowee",
     giftLink: "https://glowee.novitech.ae/gift/test123",

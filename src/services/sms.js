@@ -5,6 +5,11 @@ const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_SMS_FROM = process.env.TWILIO_SMS_FROM;
 
+console.log("SMS_ENABLED =", SMS_ENABLED);
+console.log("TWILIO_ACCOUNT_SID exists =", !!TWILIO_ACCOUNT_SID);
+console.log("TWILIO_AUTH_TOKEN exists =", !!TWILIO_AUTH_TOKEN);
+console.log("TWILIO_SMS_FROM =", TWILIO_SMS_FROM);
+
 let client = null;
 
 if (SMS_ENABLED && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
