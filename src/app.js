@@ -67,14 +67,13 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
     "http://3.122.60.25:4000",
     "capacitor://localhost",        // iOS app (if used)
-    "http://localhost",             // Android app
+    "http://localhost",            // Android app
     "https://glowee.novitech.ae",
     "https://glowee-dashboard.vercel.app",
   ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.includes(origin)) {
@@ -87,8 +86,10 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['X-Total-Count', 'X-Page-Count']
 }));
+
+// ✅ IMPORTANT
+app.options('*', cors());
 
 
 // 5. Body parsing with size limits
