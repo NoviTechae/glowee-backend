@@ -133,6 +133,9 @@ app.use("/users", require("./routes/users"));
 app.use("/notifications", require("./routes/notifications"));
 app.use("/support", require("./routes/support"));
 
+const testSmsRoute = require("./routes/testSms");
+app.use("/api", testSmsRoute);
+
 // ✅ FIX: use app instead of router OR keep router defined
 router.use("/ratings", require("./routes/ratings"));
 app.use(router);
