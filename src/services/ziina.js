@@ -30,10 +30,14 @@ const ziinaClient = axios.create({
   },
 });
 
-function buildWalletUrls() {
+function buildWalletUrls(transactionId) {
   return {
-    success_url: `${process.env.APP_URL}/wallet/payment/success`,
-    cancel_url: `${process.env.APP_URL}/wallet/payment/cancel`,
+    success_url: `${process.env.API_URL}/payments/ziina/wallet/success?transaction_id=${encodeURIComponent(
+      String(transactionId)
+    )}`,
+    cancel_url: `${process.env.API_URL}/payments/ziina/wallet/cancel?transaction_id=${encodeURIComponent(
+      String(transactionId)
+    )}`,
   };
 }
 
@@ -70,31 +74,7 @@ async function createWalletTopupPaymentIntent(
   userEmail
 ) {
   try {
-    const payload = {
-      amount: Math.round(Number(amountAed) * 100),
-      currency_code: "AED",
-      message: "Glowee Top-up",
-      ...buildWalletUrls(),
-      test: false,
-    };
-
-    console.log("Creating Ziina wallet payment intent...", {
-      keyPrefix: ZIINA_API_KEY.slice(0, 12),
-      keySuffix: ZIINA_API_KEY.slice(-8),
-      amountAed,
-    });
-    console.log("ZIINA PAYLOAD:", payload);
-
-    const response = await ziinaClient.post("/payment_intent", payload);
-    const paymentIntent = response.data;
-
-    if (!paymentIntent?.id || !paymentIntent?.redirect_url) {
-      return {
-        ok: false,
-        error: "Ziina did not return a valid payment intent",
-      };
-    }
-
+    // 1) create pending transaction first
     const [transaction] = await db("payment_transactions")
       .insert({
         user_id: userId,
@@ -104,18 +84,62 @@ async function createWalletTopupPaymentIntent(
         amount_aed: Number(amountAed),
         fee_aed: 0,
         net_amount_aed: Number(amountAed),
-        provider_payment_id: paymentIntent.id,
+        provider_payment_id: null,
         metadata: {
           phone: userPhone || null,
           email: userEmail || null,
           name: userName || null,
-          payment_url: paymentIntent.redirect_url,
-          ziina_status: paymentIntent.status || "pending",
         },
         created_at: db.fn.now(),
         updated_at: db.fn.now(),
       })
       .returning("*");
+
+    // 2) build success/cancel urls using transaction id
+    const payload = {
+      amount: Math.round(Number(amountAed) * 100),
+      currency_code: "AED",
+      message: "Glowee Top-up",
+      ...buildWalletUrls(transaction.id),
+      test: false,
+    };
+
+    console.log("Creating Ziina wallet payment intent...", {
+      transactionId: transaction.id,
+      amountAed,
+    });
+    console.log("ZIINA WALLET PAYLOAD:", payload);
+
+    const response = await ziinaClient.post("/payment_intent", payload);
+    const paymentIntent = response.data;
+
+    if (!paymentIntent?.id || !paymentIntent?.redirect_url) {
+      await db("payment_transactions")
+        .where({ id: transaction.id })
+        .update({
+          status: "failed",
+          error_message: "Ziina did not return a valid payment intent",
+          updated_at: db.fn.now(),
+        });
+
+      return {
+        ok: false,
+        error: "Ziina did not return a valid payment intent",
+      };
+    }
+
+    // 3) update transaction with payment intent info
+    await db("payment_transactions")
+      .where({ id: transaction.id })
+      .update({
+        provider_payment_id: paymentIntent.id,
+        metadata: {
+          ...(transaction.metadata || {}),
+          payment_url: paymentIntent.redirect_url,
+          ziina_status: paymentIntent.status || "pending",
+        },
+        updated_at: db.fn.now(),
+      });
 
     return {
       ok: true,
@@ -526,7 +550,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
                 month: "short",
                 year: "numeric",
               }),
-            };
+            }; 
 
             const waResult = await sendGiftNotification(recipientPhone, payload);
 

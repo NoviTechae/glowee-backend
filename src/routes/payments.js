@@ -597,6 +597,156 @@ router.get("/ziina/gift/cancel", async (req, res) => {
   }
 });
 
+router.get("/ziina/wallet/success", async (req, res) => {
+  try {
+    const transactionId = req.query.transaction_id || null;
+
+    console.log("Ziina wallet success query:", req.query);
+
+    if (!transactionId) {
+      return res.status(400).send("Missing transaction_id");
+    }
+
+    const transaction = await db("payment_transactions")
+      .where({
+        id: transactionId,
+        provider: "ziina",
+        type: "wallet_topup",
+      })
+      .first();
+
+    if (!transaction?.provider_payment_id) {
+      return res.status(404).send("Wallet topup transaction not found");
+    }
+
+    const paymentIntentId = transaction.provider_payment_id;
+
+    const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
+
+    if (!result.ok) {
+      console.error("Ziina wallet success verify failed:", result.error);
+      return res.status(400).send("Unable to verify payment");
+    }
+
+    const successStatuses = [
+      "completed",
+      "paid",
+      "succeeded",
+      "success",
+      "successful",
+      "captured",
+      "processed",
+      "requires_capture",
+    ];
+
+    if (successStatuses.includes(String(result.status).toLowerCase())) {
+      const successResult = await ziinaService.handlePaymentIntentSuccess(
+        paymentIntentId,
+        result.raw
+      );
+
+      if (!successResult.ok && !successResult.already_processed) {
+        console.error("Ziina wallet success handler failed:", successResult.error);
+        return res.status(500).send("Failed to credit wallet");
+      }
+    } else {
+      return res.status(400).send(`Payment not completed yet: ${result.status}`);
+    }
+
+    return res.send(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Wallet Top-up Successful</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              background: #f8f5f2;
+              color: #111;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              margin: 0;
+              text-align: center;
+              padding: 24px;
+            }
+            .box {
+              max-width: 420px;
+              background: white;
+              border-radius: 16px;
+              padding: 24px;
+              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+            }
+            h1 { margin: 0 0 12px; font-size: 28px; }
+            p { margin: 0; color: #555; }
+          </style>
+        </head>
+        <body>
+          <div class="box">
+            <h1>Top-up successful</h1>
+            <p>Your wallet has been credited. You can return to Glowee.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Ziina wallet success redirect error:", error);
+    return res.status(500).send("Server error");
+  }
+});
+
+router.get("/ziina/wallet/cancel", async (req, res) => {
+  try {
+    console.log("Ziina wallet cancel query:", req.query);
+
+    return res.send(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width,initial-scale=1" />
+          <title>Wallet Top-up Cancelled</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              background: #f8f5f2;
+              color: #111;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              margin: 0;
+              text-align: center;
+              padding: 24px;
+            }
+            .box {
+              max-width: 420px;
+              background: white;
+              border-radius: 16px;
+              padding: 24px;
+              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+            }
+            h1 { margin: 0 0 12px; font-size: 28px; }
+            p { margin: 0; color: #555; }
+          </style>
+        </head>
+        <body>
+          <div class="box">
+            <h1>Top-up cancelled</h1>
+            <p>Your wallet top-up was cancelled. You can return to Glowee and try again.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    console.error("Ziina wallet cancel redirect error:", error);
+    return res.status(500).send("Server error");
+  }
+});
+
 const bookingPayment = require("../controllers/bookingPaymentController");
 const giftPayment = require("../controllers/giftPaymentController");
 
