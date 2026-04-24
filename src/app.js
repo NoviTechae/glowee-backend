@@ -161,6 +161,10 @@ app.use("/user/receivers", require("./routes/receivers"));
 app.use(require("./routes/giftThemesPublic"));
 const adminGiftsRoutes = require("./routes/adminGifts");
 app.use("/dashboard/admin/gifts", adminGiftsRoutes);
+
+const salonGiftsRoutes = require("./routes/salonGifts");
+app.use("/dashboard/salon/gifts", salonGiftsRoutes);
+
 // Wallet & rewards
 app.use("/wallet", require("./routes/wallet"));
 app.use("/wallet", require("./routes/walletTopup"));
