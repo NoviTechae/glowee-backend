@@ -155,6 +155,23 @@ router.get("/:id", async (req, res, next) => {
       return res.status(404).json({ error: "Gift not found" });
     }
 
+    const usageBooking = await db("bookings as b")
+      .leftJoin("salons as s", "s.id", "b.salon_id")
+      .leftJoin("branches as br", "br.id", "b.branch_id")
+      .where("b.gift_id", id)
+      .select([
+        "b.id",
+        "b.status",
+        "b.mode",
+        "b.scheduled_at",
+        "b.total_aed",
+        "b.created_at",
+        "s.name as salon_name",
+        "br.name as branch_name",
+      ])
+      .orderBy("b.created_at", "desc")
+      .first();
+
     res.json({
       gift: {
         ...gift,
@@ -162,7 +179,15 @@ router.get("/:id", async (req, res, next) => {
         subtotal_aed: Number(gift.subtotal_aed || 0),
         gift_fee_aed: Number(gift.gift_fee_aed || 0),
         total_aed: Number(gift.total_aed || 0),
+        sender_seen_rewarded: Boolean(gift.sender_seen_rewarded),
       },
+
+      usage_booking: usageBooking
+        ? {
+          ...usageBooking,
+          total_aed: Number(usageBooking.total_aed || 0),
+        }
+        : null,
     });
   } catch (e) {
     next(e);
