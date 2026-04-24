@@ -103,57 +103,55 @@ router.get("/", async (req, res, next) => {
 });
 
 router.get("/:id", async (req, res, next) => {
-    try {
-        const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-        const gift = await db("gifts as g")
-            .leftJoin("users as sender", "sender.id", "g.sender_user_id")
-            .leftJoin("salons as s", "s.id", "g.salon_id")
-            .where("g.id", id)
-            .select([
-                "g.id",
-                "g.code",
-                "g.amount_aed",
-                "g.subtotal_aed",
-                "g.gift_fee_aed",
-                "g.total_aed",
-                "g.currency",
-                "g.status",
-                "g.sender_name",
-                "g.message",
-                "g.theme_id",
-                "g.recipient_phone",
-                "g.expires_at",
-                "g.redeemed_at",
-                "g.seen_at",
-                "g.sender_seen_rewarded",
-                "g.created_at",
-                "sender.name as sender_user_name",
-                "sender.phone as sender_phone",
-                "sender.email as sender_email",
-                "s.name as salon_name",
-            ])
-            .first();
+    const gift = await db("gifts as g")
+      .leftJoin("users as sender", "sender.id", "g.sender_user_id")
+      .leftJoin("salons as s", "s.id", "g.salon_id")
+      .where("g.id", id)
+      .select([
+        "g.id",
+        "g.code",
+        "g.amount_aed",
+        "g.subtotal_aed",
+        "g.gift_fee_aed",
+        "g.total_aed",
+        "g.currency",
+        "g.status",
+        "g.sender_name",
+        "g.message",
+        "g.theme_id",
+        "g.recipient_phone",
+        "g.expires_at",
+        "g.redeemed_at",
+        "g.seen_at",
+        "g.sender_seen_rewarded",
+        "g.created_at",
+        "sender.name as sender_user_name",
+        "sender.phone as sender_phone",
+        "sender.email as sender_email",
+        "s.name as salon_name",
+      ])
+      .first();
 
-        if (!gift) {
-            return res.status(404).json({
-                error: "Gift not found",
-            });
-        }
-
-        res.json({
-            gift: {
-                ...gift,
-                amount_aed: Number(gift.amount_aed || 0),
-                subtotal_aed: Number(gift.subtotal_aed || 0),
-                gift_fee_aed: Number(gift.gift_fee_aed || 0),
-                total_aed: Number(gift.total_aed || 0),
-                sender_seen_rewarded: Boolean(gift.sender_seen_rewarded),
-            },
-        });
-    } catch (e) {
-        next(e);
+    if (!gift) {
+      return res.status(404).json({ error: "Gift not found" });
     }
+
+    res.json({
+      gift: {
+        ...gift,
+        amount_aed: Number(gift.amount_aed || 0),
+        subtotal_aed: Number(gift.subtotal_aed || 0),
+        gift_fee_aed: Number(gift.gift_fee_aed || 0),
+        total_aed: Number(gift.total_aed || 0),
+        sender_seen_rewarded: Boolean(gift.sender_seen_rewarded),
+      },
+    });
+  } catch (e) {
+    next(e);
+  }
 });
 
 module.exports = router;
