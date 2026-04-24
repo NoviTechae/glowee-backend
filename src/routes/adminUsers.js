@@ -23,12 +23,14 @@ router.get("/", async (req, res, next) => {
     } = req.query;
 
     let query = db("users as u")
+      .leftJoin("wallets as w", "w.user_id", "u.id")
+      .leftJoin("bookings as b", "b.user_id", "u.id")
       .select([
         "u.id",
         "u.name",
         "u.phone",
         "u.email",
-        "u.wallet_balance_aed",
+        db.raw("COALESCE(w.balance_aed, 0) as wallet_balance_aed"),
         "u.is_active",
         "u.is_blocked",
         "u.created_at",
@@ -36,9 +38,7 @@ router.get("/", async (req, res, next) => {
         db.raw("COALESCE(SUM(b.total_aed),0) as total_spent_aed"),
         db.raw("MAX(b.scheduled_at) as last_booking_at"),
       ])
-      .leftJoin("bookings as b", "b.user_id", "u.id")
-      .groupBy("u.id")
-      .limit(Number(limit));
+      .groupBy("u.id", "w.balance_aed")
 
     if (search) {
       query = query.where(function () {
@@ -125,12 +125,14 @@ router.get("/export", async (req, res, next) => {
     } = req.query;
 
     let query = db("users as u")
+      .leftJoin("wallets as w", "w.user_id", "u.id")
+      .leftJoin("bookings as b", "b.user_id", "u.id")
       .select([
         "u.id",
         "u.name",
         "u.phone",
         "u.email",
-        "u.wallet_balance_aed",
+        db.raw("COALESCE(w.balance_aed, 0) as wallet_balance_aed"),
         "u.is_active",
         "u.is_blocked",
         "u.created_at",
@@ -138,8 +140,7 @@ router.get("/export", async (req, res, next) => {
         db.raw("COALESCE(SUM(b.total_aed),0) as total_spent_aed"),
         db.raw("MAX(b.scheduled_at) as last_booking_at"),
       ])
-      .leftJoin("bookings as b", "b.user_id", "u.id")
-      .groupBy("u.id");
+      .groupBy("u.id", "w.balance_aed")
 
     // Search filter
     if (search) {
@@ -227,13 +228,15 @@ router.get("/:id", async (req, res, next) => {
     const { id } = req.params;
 
     const user = await db("users as u")
+      .leftJoin("wallets as w", "w.user_id", "u.id")
+      .leftJoin("bookings as b", "b.user_id", "u.id")
       .where("u.id", id)
       .select([
         "u.id",
         "u.name",
         "u.phone",
         "u.email",
-        "u.wallet_balance_aed",
+        db.raw("COALESCE(w.balance_aed, 0) as wallet_balance_aed"),
         "u.is_active",
         "u.is_blocked",
         "u.created_at",
@@ -241,8 +244,7 @@ router.get("/:id", async (req, res, next) => {
         db.raw("COALESCE(SUM(b.total_aed),0) as total_spent_aed"),
         db.raw("MAX(b.scheduled_at) as last_booking_at"),
       ])
-      .leftJoin("bookings as b", "b.user_id", "u.id")
-      .groupBy("u.id")
+      .groupBy("u.id", "w.balance_aed")
       .first();
 
     if (!user) {
