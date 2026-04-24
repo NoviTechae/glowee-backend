@@ -169,6 +169,7 @@ app.use("/dashboard/salon/gifts", salonGiftsRoutes);
 app.use("/wallet", require("./routes/wallet"));
 app.use("/wallet", require("./routes/walletTopup"));
 app.use("/rewards", require("./routes/rewards"));
+app.use("/dashboard/salon/stamps", require("./routes/salonStamps"));
 
 // Payment routes (Tap Payments)
 app.use('/payments', require("./routes/payments"));
