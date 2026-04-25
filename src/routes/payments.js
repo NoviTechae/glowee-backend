@@ -747,6 +747,105 @@ router.get("/ziina/wallet/cancel", async (req, res) => {
   }
 });
 
+router.get("/ziina/subscription/success", async (req, res) => {
+  try {
+    const paymentId = req.query.payment_id || null;
+
+    if (!paymentId) {
+      return res.status(400).send("Missing payment_id");
+    }
+
+    const payment = await db("subscription_payments")
+      .where({ id: paymentId, provider: "ziina" })
+      .first();
+
+    if (!payment?.provider_payment_id) {
+      return res.status(404).send("Subscription payment not found");
+    }
+
+    const result = await ziinaService.getPaymentIntentStatus(
+      payment.provider_payment_id
+    );
+
+    if (!result.ok) {
+      return res.status(400).send("Unable to verify payment");
+    }
+
+    const successStatuses = [
+      "completed",
+      "paid",
+      "succeeded",
+      "success",
+      "successful",
+      "captured",
+      "processed",
+      "requires_capture",
+    ];
+
+    if (!successStatuses.includes(String(result.status).toLowerCase())) {
+      return res.status(400).send(`Payment not completed yet: ${result.status}`);
+    }
+
+    await db.transaction(async (trx) => {
+      await trx("subscription_payments")
+        .where({ id: payment.id })
+        .update({
+          status: "paid",
+          paid_at: trx.fn.now(),
+          metadata: {
+            ...(payment.metadata || {}),
+            ziina_status: result.status,
+            ziina_raw: result.raw || null,
+          },
+          updated_at: trx.fn.now(),
+        });
+
+      await trx("subscriptions")
+        .where({ id: payment.subscription_id })
+        .update({
+          provider: "ziina",
+          status: "active",
+          auto_renew: true,
+          cancel_at_period_end: false,
+          current_period_start: trx.fn.now(),
+          current_period_end: trx.raw("NOW() + INTERVAL '1 month'"),
+          cancelled_at: null,
+          ended_at: null,
+          updated_at: trx.fn.now(),
+        });
+    });
+
+    return res.redirect(
+      `${process.env.GLOWEE_DASHBOARD_URL}/salon/subscription?payment=success`
+    );
+  } catch (error) {
+    console.error("Ziina subscription success error:", error);
+    return res.status(500).send("Server error");
+  }
+});
+
+router.get("/ziina/subscription/cancel", async (req, res) => {
+  try {
+    const paymentId = req.query.payment_id || null;
+
+    if (paymentId) {
+      await db("subscription_payments")
+        .where({ id: paymentId, provider: "ziina", status: "pending" })
+        .update({
+          status: "cancelled",
+          updated_at: db.fn.now(),
+        });
+    }
+
+    return res.redirect(
+      `${process.env.GLOWEE_DASHBOARD_URL}/salon/subscription?payment=cancelled`
+    );
+  } catch (error) {
+    console.error("Ziina subscription cancel error:", error);
+    return res.status(500).send("Server error");
+  }
+});
+
 const bookingPayment = require("../controllers/bookingPaymentController");
 const giftPayment = require("../controllers/giftPaymentController");
 
