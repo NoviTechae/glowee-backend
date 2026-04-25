@@ -38,7 +38,6 @@ router.get("/", async (req, res, next) => {
         "sub.ended_at",
         "sub.created_at",
         "s.name as salon_name",
-        "s.city as salon_city",
       ])
       .orderBy("sub.created_at", "desc")
       .limit(Number(limit));
