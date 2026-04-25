@@ -182,6 +182,8 @@ app.use("/mobile", require("./routes/publicMobile"));
 const addressesRoutes = require("./routes/addresses");
 app.use("/addresses", addressesRoutes);
 
+app.use("/dashboard/salon/analytics",require("./routes/salonAnalytics"));
+
 // Dashboard
 app.use("/dashboard/auth", require("./routes/dashboardAuth"));
 app.use("/dashboard", require("./routes/dashboard"));
