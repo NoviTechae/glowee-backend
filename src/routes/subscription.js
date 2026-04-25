@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const db = require("../db/knex");
 const dashboardAuthRequired = require("../middleware/dashboardAuthRequired");
+const { createSubscriptionPaymentIntent } = require("../services/ziina");
 
 function requireSalon(req, res, next) {
   if (req.dashboard?.role !== "salon") {
@@ -245,6 +246,53 @@ router.post("/mark-paid", async (req, res, next) => {
       ok: true,
       subscription: result.updated,
       payment: result.payment,
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// POST /dashboard/salon/subscription/pay-now
+router.post("/pay-now", async (req, res, next) => {
+  try {
+    const salonId = getSalonId(req);
+
+    if (!salonId) {
+      return res.status(400).json({
+        error: "Salon account is not linked to a salon",
+      });
+    }
+
+    const sub = await db("subscriptions")
+      .where({ salon_id: salonId })
+      .orderBy("created_at", "desc")
+      .first();
+
+    if (!sub) {
+      return res.status(404).json({ error: "Subscription not found" });
+    }
+
+    if (sub.status === "active" && !sub.cancel_at_period_end) {
+      return res.status(400).json({
+        error: "Subscription is already active",
+      });
+    }
+
+    const result = await createSubscriptionPaymentIntent({
+      subscriptionId: sub.id,
+      salonId,
+      amountAed: Number(sub.amount_aed || 0),
+      planName: sub.plan_name,
+    });
+
+    if (!result.ok) {
+      return res.status(400).json({ error: result.error || "Payment failed" });
+    }
+
+    res.json({
+      ok: true,
+      payment_url: result.payment_url,
+      payment_id: result.payment_id,
     });
   } catch (e) {
     next(e);

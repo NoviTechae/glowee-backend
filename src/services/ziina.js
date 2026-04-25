@@ -63,6 +63,17 @@ function buildGiftUrls(giftId) {
   };
 }
 
+function buildSubscriptionUrls(paymentId) {
+  return {
+    success_url: `${process.env.API_URL}/payments/ziina/subscription/success?payment_id=${encodeURIComponent(
+      String(paymentId)
+    )}`,
+    cancel_url: `${process.env.API_URL}/payments/ziina/subscription/cancel?payment_id=${encodeURIComponent(
+      String(paymentId)
+    )}`,
+  };
+}
+
 /**
  * Create payment intent for wallet topup
  */
@@ -601,10 +612,98 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
   }
 }
 
+async function createSubscriptionPaymentIntent({
+  subscriptionId,
+  salonId,
+  amountAed,
+  planName,
+}) {
+  try {
+    const [payment] = await db("subscription_payments")
+      .insert({
+        subscription_id: subscriptionId,
+        salon_id: salonId,
+        provider: "ziina",
+        amount_aed: Number(amountAed),
+        currency_code: "AED",
+        status: "pending",
+        metadata: {
+          plan_name: planName || null,
+        },
+        created_at: db.fn.now(),
+        updated_at: db.fn.now(),
+      })
+      .returning("*");
+
+    const payload = {
+      amount: Math.round(Number(amountAed) * 100),
+      currency_code: "AED",
+      message: `Glowee Subscription · ${planName || "Salon Plan"}`,
+      ...buildSubscriptionUrls(payment.id),
+      test: false,
+    };
+
+    const response = await ziinaClient.post("/payment_intent", payload);
+    const pi = response.data;
+
+    if (!pi?.id || !pi?.redirect_url) {
+      await db("subscription_payments")
+        .where({ id: payment.id })
+        .update({
+          status: "failed",
+          metadata: {
+            ...(payment.metadata || {}),
+            error: "Ziina did not return a valid subscription payment intent",
+          },
+          updated_at: db.fn.now(),
+        });
+
+      return {
+        ok: false,
+        error: "Ziina did not return a valid subscription payment intent",
+      };
+    }
+
+    await db("subscription_payments")
+      .where({ id: payment.id })
+      .update({
+        provider_payment_id: pi.id,
+        metadata: {
+          ...(payment.metadata || {}),
+          payment_url: pi.redirect_url,
+          ziina_status: pi.status || "pending",
+        },
+        updated_at: db.fn.now(),
+      });
+
+    return {
+      ok: true,
+      payment_id: payment.id,
+      payment_intent_id: pi.id,
+      payment_url: pi.redirect_url,
+      amount: Number(amountAed),
+      status: pi.status || "pending",
+    };
+  } catch (error) {
+    console.error("Ziina create subscription payment intent error:", {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message,
+    });
+
+    return {
+      ok: false,
+      error: error.response?.data?.message || error.message,
+      code: error.response?.status,
+    };
+  }
+}
+
 module.exports = {
   createWalletTopupPaymentIntent,
   createBookingPaymentIntent,
   createGiftPaymentIntent,
+  createSubscriptionPaymentIntent,
   getPaymentIntentStatus,
   handlePaymentIntentSuccess,
 };
