@@ -188,7 +188,10 @@ app.use("/dashboard/salon/reviews", require("./routes/salonReviews"));
 app.use("/dashboard/auth", require("./routes/dashboardAuth"));
 app.use("/dashboard", require("./routes/dashboard"));
 app.use("/dashboard/salon/subscription", require("./routes/subscription"));// ===== ERROR HANDLERS =====
-
+app.use(
+  "/dashboard/admin/subscriptions",
+  require("./routes/adminSubscriptions")
+);
 // 404 handler - Route not found
 app.use((req, res, next) => {
   res.status(404).json({
