@@ -1,3 +1,4 @@
+// src/controllers/ratingController.js
 const knex = require("../db/knex");
 
 exports.rateBranch = async (req, res, next) => {
