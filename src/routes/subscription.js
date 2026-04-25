@@ -1,3 +1,4 @@
+// src/routes/subscription.js
 const express = require("express");
 const router = express.Router();
 const db = require("../db/knex");
@@ -48,9 +49,9 @@ router.get("/", async (req, res, next) => {
 
     const payments = subscription
       ? await db("subscription_payments")
-          .where({ subscription_id: subscription.id })
-          .orderBy("created_at", "desc")
-          .limit(10)
+        .where({ subscription_id: subscription.id })
+        .orderBy("created_at", "desc")
+        .limit(10)
       : [];
 
     const paymentMethod = await db("subscription_payment_methods")
@@ -60,9 +61,9 @@ router.get("/", async (req, res, next) => {
     res.json({
       subscription: subscription
         ? {
-            ...subscription,
-            amount_aed: Number(subscription.amount_aed || 0),
-          }
+          ...subscription,
+          amount_aed: Number(subscription.amount_aed || 0),
+        }
         : null,
 
       plans: plans.map((p) => ({
@@ -264,11 +265,41 @@ router.post("/cancel", async (req, res, next) => {
     const [updated] = await db("subscriptions")
       .where({ salon_id: salonId })
       .update({
-        status: "cancelled",
         auto_renew: false,
-        cancel_at_period_end: false,
+        cancel_at_period_end: true,
         cancelled_at: db.fn.now(),
-        ended_at: db.fn.now(),
+        updated_at: db.fn.now(),
+      })
+      .returning("*");
+
+    if (!updated) {
+      return res.status(404).json({ error: "Subscription not found" });
+    }
+
+    res.json({ ok: true, subscription: updated });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// POST /dashboard/salon/subscription/reactivate
+router.post("/reactivate", async (req, res, next) => {
+  try {
+    const salonId = getSalonId(req);
+
+    if (!salonId) {
+      return res.status(400).json({
+        error: "Salon account is not linked to a salon",
+      });
+    }
+
+    const [updated] = await db("subscriptions")
+      .where({ salon_id: salonId })
+      .update({
+        auto_renew: true,
+        cancel_at_period_end: false,
+        cancelled_at: null,
+        ended_at: null,
         updated_at: db.fn.now(),
       })
       .returning("*");
