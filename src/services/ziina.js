@@ -643,6 +643,8 @@ async function createSubscriptionPaymentIntent({
       test: false,
     };
 
+    console.log("ZIINA SUBSCRIPTION PAYLOAD:", payload);
+    
     const response = await ziinaClient.post("/payment_intent", payload);
     const pi = response.data;
 
