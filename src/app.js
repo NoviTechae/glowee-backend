@@ -119,6 +119,9 @@ app.use(
 
 // ===== ROUTES =====
 
+const appRoutes = require("./routes/app");
+app.use("/app", appRoutes);
+
 // Health check
 app.use("/health", require("./routes/health"));
 
