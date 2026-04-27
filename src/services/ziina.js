@@ -85,6 +85,29 @@ async function createWalletTopupPaymentIntent(
   userEmail
 ) {
   try {
+    const existingPending = await db("payment_transactions")
+      .where({
+        user_id: userId,
+        provider: "ziina",
+        type: "wallet_topup",
+        status: "pending",
+        amount_aed: Number(amountAed),
+      })
+      .whereRaw("created_at > NOW() - INTERVAL '15 minutes'")
+      .orderBy("created_at", "desc")
+      .first();
+
+    if (existingPending?.metadata?.payment_url) {
+      return {
+        ok: true,
+        payment_intent_id: existingPending.provider_payment_id,
+        transaction_id: existingPending.id,
+        payment_url: existingPending.metadata.payment_url,
+        amount: Number(existingPending.amount_aed),
+        status: existingPending.status,
+        reused: true,
+      };
+    }
     // 1) create pending transaction first
     const [transaction] = await db("payment_transactions")
       .insert({
@@ -196,6 +219,7 @@ async function createBookingPaymentIntent(
         type: "booking_payment",
         status: "pending",
       })
+      .whereRaw("created_at > NOW() - INTERVAL '15 minutes'")
       .orderBy("created_at", "desc")
       .first();
 
@@ -296,6 +320,32 @@ async function createGiftPaymentIntent(
 ) {
   try {
     const giftId = metadata.gift_id || null;
+
+    const existingPending = await db("payment_transactions")
+      .where({
+        user_id: userId,
+        provider: "ziina",
+        type: "gift_purchase",
+        status: "pending",
+      })
+      .modify((qb) => {
+        if (giftId) qb.where({ gift_id: giftId });
+      })
+      .whereRaw("created_at > NOW() - INTERVAL '15 minutes'")
+      .orderBy("created_at", "desc")
+      .first();
+
+    if (existingPending?.metadata?.payment_url) {
+      return {
+        ok: true,
+        payment_url: existingPending.metadata.payment_url,
+        payment_intent_id: existingPending.provider_payment_id,
+        transaction_id: existingPending.id,
+        amount: Number(existingPending.amount_aed),
+        status: existingPending.status,
+        reused: true,
+      };
+    }
 
     const payload = {
       amount: Math.round(Number(amountAed) * 100),
@@ -496,6 +546,59 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
     }
 
     if (transaction.type === "booking_payment" && transaction.booking_id) {
+      const existingSucceededBookingPayment = await trx("payment_transactions")
+        .where({
+          booking_id: transaction.booking_id,
+          type: "booking_payment",
+          status: "succeeded",
+        })
+        .whereNot({ id: transaction.id })
+        .first();
+
+      if (existingSucceededBookingPayment) {
+        console.warn("DUPLICATE BOOKING PAYMENT DETECTED =>", {
+          bookingId: transaction.booking_id,
+          originalTransactionId: existingSucceededBookingPayment.id,
+          duplicateTransactionId: transaction.id,
+        });
+
+        const { addWalletBalance } = require("../controllers/walletController");
+
+        await addWalletBalance(
+          transaction.user_id,
+          Number(transaction.net_amount_aed || transaction.amount_aed || 0),
+          `Duplicate booking payment refunded to wallet`,
+          transaction.id,
+          "duplicate_payment_refund",
+          trx
+        );
+
+        await trx("payment_transactions")
+          .where({ id: transaction.id })
+          .update({
+            status: "refunded_to_wallet",
+            refunded_at: trx.fn.now(),
+            metadata: {
+              ...existingMetadata,
+              duplicate_of_transaction_id: existingSucceededBookingPayment.id,
+              refund_destination: "wallet",
+              refund_reason: "duplicate_booking_payment",
+            },
+            updated_at: trx.fn.now(),
+          });
+
+        await trx.commit();
+
+        return {
+          ok: true,
+          duplicate_payment: true,
+          refunded_to_wallet: true,
+          transaction_id: transaction.id,
+          booking_id: transaction.booking_id,
+          amount: Number(transaction.amount_aed || 0),
+        };
+      }
+
       console.log("UPDATING BOOKING TO CONFIRMED =>", transaction.booking_id);
 
       await trx("bookings")
