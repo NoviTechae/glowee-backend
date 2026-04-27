@@ -188,6 +188,28 @@ async function createBookingPaymentIntent(
   metadata = {}
 ) {
   try {
+    const existingPending = await db("payment_transactions")
+      .where({
+        user_id: userId,
+        booking_id: bookingId,
+        provider: "ziina",
+        type: "booking_payment",
+        status: "pending",
+      })
+      .orderBy("created_at", "desc")
+      .first();
+
+    if (existingPending?.metadata?.payment_url) {
+      return {
+        ok: true,
+        payment_url: existingPending.metadata.payment_url,
+        payment_intent_id: existingPending.provider_payment_id,
+        transaction_id: existingPending.id,
+        amount: Number(existingPending.amount_aed),
+        status: existingPending.status,
+        reused: true,
+      };
+    }
     const payload = {
       amount: Math.round(Number(amountAed) * 100),
       currency_code: "AED",
@@ -561,7 +583,7 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
                 month: "short",
                 year: "numeric",
               }),
-            }; 
+            };
 
             const waResult = await sendGiftNotification(recipientPhone, payload);
 
@@ -644,7 +666,7 @@ async function createSubscriptionPaymentIntent({
     };
 
     console.log("ZIINA SUBSCRIPTION PAYLOAD:", payload);
-    
+
     const response = await ziinaClient.post("/payment_intent", payload);
     const pi = response.data;
 
