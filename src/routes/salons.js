@@ -4,6 +4,7 @@ const router = express.Router();
 const salonController = require("../controllers/salonController");
 
 router.get("/", salonController.getSalons);
+router.get("/search", salonController.searchSalons);
 router.get("/:id", salonController.getSalonById);
 
 router.get("/:salonId/branches", salonController.getBranchesBySalonId);

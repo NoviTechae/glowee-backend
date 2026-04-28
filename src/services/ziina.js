@@ -620,22 +620,42 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       }
     }
 
-    if (transaction.type === "gift_purchase" && transaction.gift_id) {
-      const gift = await trx("gifts")
-        .where({ id: transaction.gift_id })
-        .first();
+if (transaction.type === "gift_purchase" && transaction.gift_id) {
+  const gift = await trx("gifts")
+    .where({ id: transaction.gift_id })
+    .first();
 
-      if (gift) {
-        await trx("gifts")
-          .where({ id: transaction.gift_id })
-          .update({
-            status: "active",
-          });
+  if (gift) {
+    await trx("gifts")
+      .where({ id: transaction.gift_id })
+      .update({
+        status: "active",
+      });
 
-        const metadata =
-          typeof transaction.metadata === "object" && transaction.metadata !== null
-            ? transaction.metadata
-            : {};
+    const { addPoints } = require("../controllers/rewardController");
+
+    const alreadyRewarded = await trx("reward_transactions")
+      .where({
+        user_id: transaction.user_id,
+        type: "gift_sent",
+        ref_id: transaction.gift_id,
+      })
+      .first();
+
+    if (!alreadyRewarded) {
+      await addPoints(
+        transaction.user_id,
+        10,
+        "gift_sent",
+        transaction.gift_id,
+        trx
+      );
+    }
+
+    const metadata =
+      typeof transaction.metadata === "object" && transaction.metadata !== null
+        ? transaction.metadata
+        : {};
 
         const senderName =
           metadata.sender_name ||

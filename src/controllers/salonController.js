@@ -156,6 +156,139 @@ exports.getSalons = async (req, res, next) => {
 };
 
 /**
+ * GET /salons/search?q=hair&limit=30
+ */
+exports.searchSalons = async (req, res, next) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const limit = parseIntSafe(req.query.limit, 30);
+
+    if (!q) {
+      return res.json({ ok: true, data: [] });
+    }
+
+    const keyword = `%${q}%`;
+
+    const salons = await knex("salons as s")
+      .leftJoin("branches as b", function () {
+        this.on("b.salon_id", "s.id").andOn("b.is_active", "=", knex.raw("true"));
+      })
+      .leftJoin("services as srv", function () {
+        this.on("srv.salon_id", "s.id").andOn("srv.is_active", "=", knex.raw("true"));
+      })
+      .leftJoin("service_categories as cat", "cat.id", "srv.category_id")
+      .where("s.is_active", true)
+      .andWhere(function () {
+        this.whereILike("s.name", keyword)
+          .orWhereILike("s.about", keyword)
+          .orWhereILike("b.name", keyword)
+          .orWhereILike("b.city", keyword)
+          .orWhereILike("b.area", keyword)
+          .orWhereILike("srv.name", keyword)
+          .orWhereILike("srv.description", keyword)
+          .orWhereILike("cat.name", keyword);
+      })
+      .groupBy("s.id")
+      .select(
+        "s.id",
+        "s.name",
+        "s.salon_type",
+        "s.logo_url",
+        "s.cover_url",
+        "s.about",
+        "s.is_featured",
+        "s.discount_percent",
+        "s.double_stamps",
+        knex.raw(`CASE WHEN s.salon_type = 'home' THEN 1 ELSE COUNT(DISTINCT b.id) END as branches_count`)
+      )
+      .orderBy("s.is_featured", "desc")
+      .orderBy("s.created_at", "desc")
+      .limit(limit);
+
+    const salonIds = salons.map((s) => s.id);
+
+    if (!salonIds.length) {
+      return res.json({ ok: true, data: [] });
+    }
+
+    const branches = await knex("branches as b")
+      .join("salons as s", "s.id", "b.salon_id")
+      .leftJoin("branch_hours as bh", function () {
+        this.on("bh.branch_id", "b.id").andOn("bh.day_of_week", "=", dowRaw);
+      })
+      .leftJoin("booking_ratings as r", "r.branch_id", "b.id")
+      .whereIn("b.salon_id", salonIds)
+      .andWhere("b.is_active", true)
+      .andWhere("s.is_active", true)
+      .select([
+        "b.id",
+        "b.salon_id",
+        "b.name",
+        "b.city",
+        "b.area",
+        "b.address_line",
+        "b.lat",
+        "b.lng",
+        "b.supports_home_services",
+        knex.raw(`COALESCE(AVG(r.rating), 0)::decimal(3,2) as rating`),
+        knex.raw(`COUNT(r.id)::int as reviews_count`),
+        "bh.is_closed as today_is_closed",
+        "bh.open_time as today_open_time",
+        "bh.close_time as today_close_time",
+        openNowSql(),
+      ])
+      .groupBy(
+        "b.id",
+        "bh.branch_id",
+        "bh.is_closed",
+        "bh.open_time",
+        "bh.close_time"
+      )
+      .orderBy("b.created_at", "asc");
+
+    const services = await knex("services as srv")
+      .leftJoin("service_categories as cat", "srv.category_id", "cat.id")
+      .whereIn("srv.salon_id", salonIds)
+      .andWhere("srv.is_active", true)
+      .select(
+        "srv.id",
+        "srv.salon_id",
+        "srv.name",
+        "srv.description",
+        "srv.image_url",
+        "cat.id as category_id",
+        "cat.name as category_name"
+      );
+
+    const data = salons.map((salon) => {
+      const salonBranches = branches
+        .filter((b) => b.salon_id === salon.id)
+        .map((b) => ({ ...b, branch_hours: [] }));
+
+      return {
+        ...salon,
+        branches: salonBranches,
+        services: services
+          .filter((x) => x.salon_id === salon.id)
+          .map((x) => ({
+            id: x.id,
+            name: x.name,
+            description: x.description,
+            image_url: x.image_url,
+            category: x.category_id
+              ? { id: x.category_id, name: x.category_name }
+              : null,
+          })),
+      };
+    });
+
+    return res.json({ ok: true, data });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
  * GET /salons/:id
  */
 exports.getSalonById = async (req, res, next) => {
