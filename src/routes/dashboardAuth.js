@@ -18,7 +18,7 @@ function issueDashboardJwt(acc) {
       typ: "dashboard",
     },
     JWT_SECRET,
-    { expiresIn: "30d" }
+    { expiresIn: "365d" }
   );
 }
 

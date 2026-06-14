@@ -70,7 +70,7 @@ async function createTapCustomer(userId, userPhone, userEmail, userName) {
 async function createWalletTopupCharge(userId, amountAed, userPhone, userName, userEmail) {
   try {
     const user = await db('users').where({ id: userId }).first();
-    
+
     // Get or create Tap customer
     let customerId = null;
     const existingPayment = await db('payment_transactions')
@@ -452,7 +452,7 @@ async function listSavedCards(userId) {
 async function createBookingCharge(userId, bookingId, amountAed, userPhone, userName, userEmail, metadata = {}) {
   try {
     const booking = await db('bookings').where({ id: bookingId }).first();
-    
+
     if (!booking) {
       return { ok: false, error: 'Booking not found' };
     }
@@ -468,7 +468,7 @@ async function createBookingCharge(userId, bookingId, amountAed, userPhone, user
       customerId = existingPayment.provider_customer_id;
     }
 
-    const description = metadata.split_payment 
+    const description = metadata.split_payment
       ? `Glowee Booking (Split Payment) - AED ${amountAed}`
       : `Glowee Booking Payment - AED ${amountAed}`;
 
@@ -652,6 +652,126 @@ async function createGiftCharge(userId, amountAed, recipientPhone, userPhone, us
   }
 }
 
+async function createApplePayCharge({
+  userId,
+  amountAed,
+  tokenId,
+  purpose,
+  bookingId = null,
+  giftId = null,
+  customer = {},
+}) {
+  try {
+    const amount = Number(amountAed);
+
+    const [transaction] = await db("payment_transactions")
+      .insert({
+        user_id: userId,
+        provider: "tap",
+        type: purpose,
+        status: "pending",
+        amount_aed: amount,
+        fee_aed: 0,
+        net_amount_aed: amount,
+        provider_payment_id: null,
+        provider_customer_id: null,
+        booking_id: bookingId,
+        gift_id: giftId,
+        payment_method_type: "apple_pay",
+        metadata: {
+          token_id: tokenId,
+          source: "tap_apple_pay_native",
+          phone: customer.phone || null,
+          email: customer.email || null,
+          name: customer.name || null,
+        },
+        created_at: db.fn.now(),
+        updated_at: db.fn.now(),
+      })
+      .returning("*");
+
+    const response = await tapClient.post("/charges", {
+      amount,
+      currency: "AED",
+      customer_initiated: true,
+      threeDSecure: true,
+      save_card: false,
+      description: `Glowee ${purpose}`,
+      metadata: {
+        glowee_user_id: String(userId),
+        transaction_id: String(transaction.id),
+        type: purpose,
+        booking_id: bookingId || "",
+        gift_id: giftId || "",
+      },
+      receipt: {
+        email: false,
+        sms: false,
+      },
+      customer: {
+        first_name: customer.name?.split(" ")?.[0] || "Glowee",
+        last_name: customer.name?.split(" ")?.slice(1).join(" ") || "User",
+        email: customer.email || `user${userId}@glowee.app`,
+        phone: {
+          country_code: "971",
+          number:
+            String(customer.phone || "")
+              .replace("+971", "")
+              .replace(/\s/g, "")
+              .replace(/[^\d]/g, "") || "500000000",
+        },
+      },
+      source: {
+        id: tokenId,
+      },
+      post: {
+        url: `${process.env.API_URL}/payments/webhooks/tap`,
+      },
+      redirect: {
+        url: `${process.env.API_URL}/payments/tap/apple-pay/done?transaction_id=${encodeURIComponent(
+          String(transaction.id)
+        )}`,
+      },
+    });
+
+    const charge = response.data;
+    const status = String(charge.status || "").toUpperCase();
+
+    await db("payment_transactions")
+      .where({ id: transaction.id })
+      .update({
+        provider_payment_id: charge.id || null,
+        metadata: {
+          ...(transaction.metadata || {}),
+          tap_charge: charge,
+        },
+        updated_at: db.fn.now(),
+      });
+
+    if (status === "CAPTURED" || status === "AUTHORIZED") {
+      await handlePaymentSuccess(charge.id, charge);
+    }
+
+    return {
+      ok: true,
+      charge_id: charge.id,
+      transaction_id: transaction.id,
+      status: charge.status,
+      amount,
+    };
+  } catch (error) {
+    console.error("Tap Apple Pay charge error:", error.response?.data || error.message);
+
+    return {
+      ok: false,
+      error:
+        error.response?.data?.errors?.[0]?.description ||
+        error.response?.data?.message ||
+        error.message,
+      code: error.response?.status || error.response?.data?.code,
+    };
+  }
+}
 
 module.exports = {
   createTapCustomer,
@@ -664,4 +784,5 @@ module.exports = {
   listSavedCards,
   createBookingCharge,
   createGiftCharge,
+  createApplePayCharge,
 };

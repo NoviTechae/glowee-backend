@@ -846,6 +846,61 @@ router.get("/ziina/subscription/cancel", async (req, res) => {
   }
 });
 
+router.post("/tap/apple-pay/charge", authRequired, async (req, res, next) => {
+  try {
+    const { z } = require("zod");
+
+    const BodySchema = z.object({
+      purpose: z.enum(["wallet_topup", "gift_purchase", "booking_payment"]),
+      amount_aed: z.number().min(1).max(10000),
+      token_id: z.string().min(3),
+      booking_id: z.string().uuid().nullable().optional(),
+      gift_id: z.string().uuid().nullable().optional(),
+    });
+
+    const body = BodySchema.parse(req.body);
+    const userId = req.user.sub;
+
+    const user = await db("users").where({ id: userId }).first();
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const tapResult = await tapService.createApplePayCharge({
+      userId,
+      amountAed: body.amount_aed,
+      tokenId: body.token_id,
+      purpose: body.purpose,
+      bookingId: body.booking_id || null,
+      giftId: body.gift_id || null,
+      customer: {
+        phone: user.phone,
+        name: user.name,
+        email: user.email,
+      },
+    });
+
+    if (!tapResult.ok) {
+      return res.status(400).json({
+        error: tapResult.error,
+        code: tapResult.code,
+      });
+    }
+
+    return res.json({
+      ok: true,
+      provider: "tap",
+      charge_id: tapResult.charge_id,
+      transaction_id: tapResult.transaction_id,
+      status: tapResult.status,
+      amount: tapResult.amount,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 const bookingPayment = require("../controllers/bookingPaymentController");
 const giftPayment = require("../controllers/giftPaymentController");
 
@@ -854,5 +909,6 @@ router.post("/bookings/:id/pay", authRequired, bookingPayment.payForBooking);
 
 router.get("/gifts/payment-options", authRequired, giftPayment.getGiftPaymentOptions);
 router.post("/gifts/send-with-payment", authRequired, giftPayment.sendGiftWithPayment);
+
 
 module.exports = router;

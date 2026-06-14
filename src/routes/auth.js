@@ -51,7 +51,7 @@ function issueJwt(user) {
   return jwt.sign(
     { sub: String(user.id), phone: user.phone },
     JWT_SECRET,
-    { expiresIn: '30d' }
+    { expiresIn: '365d' }
   );
 }
 
