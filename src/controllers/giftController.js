@@ -405,7 +405,7 @@ exports.sendGift = async (req, res, next) => {
 
     for (const receiver of finalReceivers) {
       const code = uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase();
-      const expires_at = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+const expires_at = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
 
       const [gift] = await trx("gifts")
         .insert({

@@ -185,8 +185,7 @@ const sendGiftWithPayment = async (req, res, next) => {
 
     const { v4: uuidv4 } = require("uuid");
     const giftCode = uuidv4().replace(/-/g, "").slice(0, 12).toUpperCase();
-    const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
-
+    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
     let salonName = null;
     if (salon_id) {
       const salon = await trx("salons").where({ id: salon_id }).first("name");
