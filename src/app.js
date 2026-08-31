@@ -187,6 +187,17 @@ app.use("/addresses", addressesRoutes);
 
 app.use("/dashboard/salon/analytics",require("./routes/salonAnalytics"));
 app.use("/dashboard/salon/reviews", require("./routes/salonReviews"));
+
+app.use(
+  "/dashboard/salon/partner-feedback",
+  require("./routes/partnerFeedback")
+);
+
+app.use(
+  "/dashboard/admin/partner-feedback",
+  require("./routes/adminPartnerFeedback")
+);
+
 // Dashboard
 app.use("/dashboard/auth", require("./routes/dashboardAuth"));
 app.use("/dashboard", require("./routes/dashboard"));
