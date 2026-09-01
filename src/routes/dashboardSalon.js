@@ -861,14 +861,14 @@ router.post("/services", dashboardAuthRequired, requireSalon, async (req, res, n
       .returning("*");
 
     res.json({ service: row });
-} catch (e) {
-  if (e.code === "23505") {
-    return res.status(400).json({
-      error: "Service with this name already exists",
-    });
+  } catch (e) {
+    if (e.code === "23505") {
+      return res.status(400).json({
+        error: "Service with this name already exists",
+      });
+    }
+    next(e);
   }
-  next(e);
-}
 });
 
 // POST /dashboard/salon/services/:serviceId/image
@@ -1159,20 +1159,24 @@ router.get("/stats", dashboardAuthRequired, requireSalon, async (req, res, next)
     // Today's bookings
     const [{ today_bookings }] = await db("bookings")
       .where({ salon_id })
-      .whereRaw("DATE(scheduled_at) = CURRENT_DATE")
+      .whereRaw(`
+    (scheduled_at AT TIME ZONE 'Asia/Dubai')::date =
+    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')::date
+  `)
       .count("* as today_bookings");
 
     // Total revenue (completed bookings only)
     const [{ total_revenue }] = await db("bookings")
       .where({ salon_id, status: "completed" })
-      .sum("total_aed as total_revenue");
-
+      .sum("subtotal_aed as total_revenue");
     // This month's revenue (completed bookings)
     const [{ this_month_revenue }] = await db("bookings")
       .where({ salon_id, status: "completed" })
-      .whereRaw("DATE_TRUNC('month', scheduled_at) = DATE_TRUNC('month', CURRENT_DATE)")
-      .sum("total_aed as this_month_revenue");
-
+      .whereRaw(`
+    DATE_TRUNC('month', scheduled_at AT TIME ZONE 'Asia/Dubai') =
+    DATE_TRUNC('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')
+  `)
+      .sum("subtotal_aed as this_month_revenue");
     res.json({
       total_bookings: Number(total_bookings || 0),
       active_bookings: Number(active_bookings || 0),

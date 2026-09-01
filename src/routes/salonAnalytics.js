@@ -47,8 +47,8 @@ router.get("/", async (req, res, next) => {
     const [{ total_revenue }] = await db("bookings")
       .where("salon_id", salonId)
       .where("status", "completed")
-      .sum("total_aed as total_revenue");
-
+      .sum("subtotal_aed as total_revenue");
+      
     const topServices = await db("booking_items as bi")
       .leftJoin("bookings as b", "b.id", "bi.booking_id")
       .where("b.salon_id", salonId)
