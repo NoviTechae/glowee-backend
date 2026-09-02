@@ -1,111 +1,229 @@
 // backend/src/routes/adminNotifications.js
+
 const router = require("express").Router();
 const db = require("../db/knex");
 const dashboardAuthRequired = require("../middleware/dashboardAuthRequired");
 const { createNotification } = require("../utils/notifications");
 
-// POST /dashboard/admin/notifications/send
-router.post("/send", dashboardAuthRequired, async (req, res, next) => {
-  try {
-    const { title, body, targetType, userId, segment, type, data } = req.body;
+function requireAdmin(req, res, next) {
+  if (req.dashboard?.role !== "admin") {
+    return res.status(403).json({ error: "Admin only" });
+  }
 
-    if (!title || !body) {
-      return res.status(400).json({ error: "Title and body are required" });
+  next();
+}
+
+router.use(dashboardAuthRequired, requireAdmin);
+
+// POST /dashboard/admin/notifications/send
+router.post("/send", async (req, res, next) => {
+  try {
+    const {
+      title,
+      body,
+      targetType,
+      userId,
+      segment,
+      type,
+      data,
+    } = req.body;
+
+    const cleanTitle = String(title || "").trim();
+    const cleanBody = String(body || "").trim();
+
+    if (!cleanTitle || !cleanBody) {
+      return res.status(400).json({
+        error: "Title and body are required",
+      });
+    }
+
+    if (cleanTitle.length > 60) {
+      return res.status(400).json({
+        error: "Title must be 60 characters or less",
+      });
+    }
+
+    if (cleanBody.length > 160) {
+      return res.status(400).json({
+        error: "Body must be 160 characters or less",
+      });
     }
 
     let userIds = [];
 
     switch (targetType) {
-      case "all":
-        const allUsers = await db("users")
-          .whereNotNull("push_token")
-          .select("id");
-        userIds = allUsers.map((u) => u.id);
-        break;
+      case "all": {
+        const users = await db("users")
+          .select("id")
+          .orderBy("id", "asc");
 
-      case "specific_user":
+        userIds = users.map((user) => user.id);
+        break;
+      }
+
+      case "specific_user": {
         if (!userId) {
-          return res.status(400).json({ error: "User ID is required" });
+          return res.status(400).json({
+            error: "User ID is required",
+          });
         }
-        userIds = [userId];
-        break;
 
-      case "user_segment":
+        const user = await db("users")
+          .where({ id: userId })
+          .first("id");
+
+        if (!user) {
+          return res.status(404).json({
+            error: "User not found",
+          });
+        }
+
+        userIds = [user.id];
+        break;
+      }
+
+      case "user_segment": {
+        if (!segment) {
+          return res.status(400).json({
+            error: "Segment is required",
+          });
+        }
+
         userIds = await getUsersBySegment(segment);
         break;
+      }
 
       default:
-        return res.status(400).json({ error: "Invalid target type" });
+        return res.status(400).json({
+          error: "Invalid target type",
+        });
     }
+
+    userIds = [...new Set(userIds)];
 
     if (userIds.length === 0) {
-      return res.status(400).json({ error: "No users found" });
+      return res.status(400).json({
+        error: "No users found for this audience",
+      });
     }
 
-    // إرسال الإشعارات
+    let savedCount = 0;
+
     for (const id of userIds) {
-      await createNotification(id, title, body, type, data);
+      await createNotification(
+        id,
+        cleanTitle,
+        cleanBody,
+        type || "general",
+        data || null
+      );
+
+      savedCount += 1;
     }
 
-    console.log(`✅ Sent notifications to ${userIds.length} users`);
+    console.log(
+      `✅ Admin notification created for ${savedCount} users`
+    );
 
     res.json({
       ok: true,
-      count: userIds.length,
-      message: `Notifications sent to ${userIds.length} users`,
+      count: savedCount,
+      message: `Notification created for ${savedCount} users`,
     });
   } catch (error) {
-    console.error("Error sending notifications:", error);
+    console.error(
+      "Error sending admin notifications:",
+      error
+    );
+
     next(error);
   }
 });
 
 async function getUsersBySegment(segment) {
-  let query;
-
   switch (segment) {
-    case "active_users":
+    case "active_users": {
       const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      query = db("users")
-        .where("created_at", ">=", sevenDaysAgo)
-        .whereNotNull("push_token");
-      break;
 
-    case "inactive_users":
+      sevenDaysAgo.setDate(
+        sevenDaysAgo.getDate() - 7
+      );
+
+      const users = await db("users")
+        .whereNotNull("last_login")
+        .where(
+          "last_login",
+          ">=",
+          sevenDaysAgo
+        )
+        .select("id");
+
+      return users.map((user) => user.id);
+    }
+
+    case "inactive_users": {
       const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      query = db("users")
-        .where("created_at", "<", thirtyDaysAgo)
-        .whereNotNull("push_token");
-      break;
 
-    case "with_bookings":
-      query = db("users")
-        .join("bookings", "users.id", "bookings.user_id")
-        .whereNotNull("users.push_token")
-        .groupBy("users.id");
-      break;
+      thirtyDaysAgo.setDate(
+        thirtyDaysAgo.getDate() - 30
+      );
 
-    case "with_gifts":
-      query = db("users")
-        .join("gifts", "users.id", "gifts.receiver_id")
-        .whereNotNull("users.push_token")
-        .groupBy("users.id");
-      break;
+      const users = await db("users")
+        .whereNotNull("last_login")
+        .where(
+          "last_login",
+          "<",
+          thirtyDaysAgo
+        )
+        .select("id");
 
-    case "with_streak":
-      query = db("users")
-        .whereNotNull("push_token")
-        .where("streak_count", ">", 0);
-      break;
+      return users.map((user) => user.id);
+    }
+
+    case "with_bookings": {
+      const users = await db("users")
+        .join(
+          "bookings",
+          "users.id",
+          "bookings.user_id"
+        )
+        .distinct("users.id");
+
+      return users.map((user) => user.id);
+    }
+
+    case "with_gifts": {
+      const users = await db("users")
+        .join(
+          "gifts",
+          "users.phone",
+          "gifts.recipient_phone"
+        )
+        .distinct("users.id");
+
+      return users.map((user) => user.id);
+    }
+
+    case "with_streak": {
+      const users = await db("users")
+        .join(
+          "user_rewards",
+          "users.id",
+          "user_rewards.user_id"
+        )
+        .where(
+          "user_rewards.streak_count",
+          ">",
+          0
+        )
+        .distinct("users.id");
+
+      return users.map((user) => user.id);
+    }
 
     default:
       return [];
   }
-
-  const users = await query.select("users.id");
-  return users.map((u) => u.id);
 }
 
 module.exports = router;
