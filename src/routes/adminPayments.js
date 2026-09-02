@@ -22,13 +22,17 @@ router.get("/stats", async (req, res, next) => {
 
     const [{ today_revenue }] = await db("payment_transactions")
       .where("status", "succeeded")
-      .whereRaw("DATE(created_at) = CURRENT_DATE")
-      .sum("amount_aed as today_revenue");
+      .whereRaw(`
+  (created_at AT TIME ZONE 'Asia/Dubai')::date =
+  (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')::date
+`).sum("amount_aed as today_revenue");
 
     const [{ month_revenue }] = await db("payment_transactions")
       .where("status", "succeeded")
-      .whereRaw("DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)")
-      .sum("amount_aed as month_revenue");
+      .whereRaw(`
+  DATE_TRUNC('month', created_at AT TIME ZONE 'Asia/Dubai') =
+  DATE_TRUNC('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')
+`).sum("amount_aed as month_revenue");
 
     const [{ successful_payments }] = await db("payment_transactions")
       .where("status", "succeeded")
@@ -123,11 +127,17 @@ router.get("/export", async (req, res, next) => {
     }
 
     if (from) {
-      query = query.whereRaw("DATE(pt.created_at) >= ?", [from]);
+      query = query.whereRaw(
+        "(pt.created_at AT TIME ZONE 'Asia/Dubai')::date >= ?::date",
+        [from]
+      );
     }
 
     if (to) {
-      query = query.whereRaw("DATE(pt.created_at) <= ?", [to]);
+      query = query.whereRaw(
+        "(pt.created_at AT TIME ZONE 'Asia/Dubai')::date <= ?::date",
+        [to]
+      );
     }
 
     const rows = await query;
@@ -279,11 +289,17 @@ router.get("/", async (req, res, next) => {
     }
 
     if (from) {
-      query = query.whereRaw("DATE(pt.created_at) >= ?", [from]);
+      query = query.whereRaw(
+        "(pt.created_at AT TIME ZONE 'Asia/Dubai')::date >= ?::date",
+        [from]
+      );
     }
 
     if (to) {
-      query = query.whereRaw("DATE(pt.created_at) <= ?", [to]);
+      query = query.whereRaw(
+        "(pt.created_at AT TIME ZONE 'Asia/Dubai')::date <= ?::date",
+        [to]
+      );
     }
 
     const rows = await query;
