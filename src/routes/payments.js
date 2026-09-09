@@ -238,16 +238,7 @@ router.get("/verify/ziina/:paymentIntentId", authRequired, async (req, res, next
       return res.status(400).json({ error: result.error });
     }
 
-    const successStatuses = [
-      "completed",
-      "paid",
-      "succeeded",
-      "success",
-      "successful",
-      "captured",
-      "processed",
-      "requires_capture",
-    ];
+    const successStatuses = ["completed"];
 
     if (successStatuses.includes(String(result.status).toLowerCase())) {
       const successResult = await ziinaService.handlePaymentIntentSuccess(
