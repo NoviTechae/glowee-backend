@@ -170,7 +170,7 @@ app.use("/dashboard/salon/gifts", salonGiftsRoutes);
 
 // Wallet & rewards
 app.use("/wallet", require("./routes/wallet"));
-app.use("/wallet", require("./routes/walletTopup"));
+// app.use("/wallet", require("./routes/walletTopup"));
 app.use("/rewards", require("./routes/rewards"));
 app.use("/dashboard/salon/stamps", require("./routes/salonStamps"));
 
