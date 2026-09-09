@@ -350,6 +350,29 @@ router.get("/ziina/booking/success", async (req, res) => {
       return res.status(400).send("Unable to verify payment");
     }
 
+    const normalizedStatus = String(result.status || "").toLowerCase();
+
+    const successfulStatuses = [
+      "completed",
+      "paid",
+      "succeeded",
+      "success",
+      "successful",
+      "captured",
+      "processed",
+      "requires_capture",
+    ];
+
+    if (!successfulStatuses.includes(normalizedStatus)) {
+      console.warn("Ziina booking payment is not successful:", {
+        paymentIntentId,
+        status: result.status,
+        bookingId,
+      });
+
+      return res.status(400).send("Payment has not been completed");
+    }
+
     const successResult = await ziinaService.handlePaymentIntentSuccess(
       paymentIntentId,
       result.raw
@@ -374,8 +397,78 @@ router.get("/ziina/booking/success", async (req, res) => {
 });
 
 router.get("/ziina/booking/cancel", async (req, res) => {
+  const trx = await db.transaction();
+
   try {
+    const bookingId = req.query.booking_id || null;
+
     console.log("Ziina booking cancel query:", req.query);
+
+    if (!bookingId) {
+      await trx.rollback();
+      return res.status(400).send("Missing booking_id");
+    }
+
+    const transaction = await trx("payment_transactions")
+      .where({
+        provider: "ziina",
+        type: "booking_payment",
+        booking_id: bookingId,
+        status: "pending",
+      })
+      .orderBy("created_at", "desc")
+      .forUpdate()
+      .first();
+
+    if (transaction) {
+      const metadata =
+        typeof transaction.metadata === "object" && transaction.metadata !== null
+          ? transaction.metadata
+          : {};
+
+      const isSplitPayment = metadata.split_payment === true;
+      const walletAmount = Number(metadata.wallet_amount || 0);
+      const walletAlreadyRefunded = metadata.wallet_refunded === true;
+
+      if (isSplitPayment && walletAmount > 0 && !walletAlreadyRefunded) {
+        const { addWalletBalance } = require("../controllers/walletController");
+
+        await addWalletBalance(
+          transaction.user_id,
+          walletAmount,
+          `Refund - Split booking payment cancelled #${bookingId}`,
+          bookingId,
+          "refund",
+          trx
+        );
+
+        await trx("payment_transactions")
+          .where({ id: transaction.id })
+          .update({
+            status: "cancelled",
+            metadata: {
+              ...metadata,
+              wallet_refunded: true,
+              wallet_refund_amount: walletAmount,
+              wallet_refund_reason: "booking_payment_cancelled",
+            },
+            updated_at: trx.fn.now(),
+          });
+      } else {
+        await trx("payment_transactions")
+          .where({ id: transaction.id })
+          .update({
+            status: "cancelled",
+            metadata: {
+              ...metadata,
+              cancelled: true,
+            },
+            updated_at: trx.fn.now(),
+          });
+      }
+    }
+
+    await trx.commit();
 
     return res.send(`
       <!doctype html>
@@ -417,6 +510,7 @@ router.get("/ziina/booking/cancel", async (req, res) => {
       </html>
     `);
   } catch (error) {
+    await trx.rollback();
     console.error("Ziina booking cancel redirect error:", error);
     return res.status(500).send("Server error");
   }
