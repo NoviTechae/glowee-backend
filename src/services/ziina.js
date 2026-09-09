@@ -553,6 +553,12 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
           status: "succeeded",
         })
         .whereNot({ id: transaction.id })
+        .where(function () {
+          this.whereNull("metadata")
+            .orWhereRaw(
+              "COALESCE((metadata->>'wallet_portion')::boolean, false) = false"
+            );
+        })
         .first();
 
       if (existingSucceededBookingPayment) {
