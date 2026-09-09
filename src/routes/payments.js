@@ -7,7 +7,7 @@ const ziinaService = require("../services/ziina");
 const db = require("../db/knex");
 
 const WalletTopupSchema = z.object({
-  amount_aed: z.number().min(10).max(10000),
+  amount_aed: z.number().min(5).max(10000),
   provider: z.enum(["tap", "ziina"]).optional().default("ziina"),
 });
 
