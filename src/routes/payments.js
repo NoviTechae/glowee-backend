@@ -352,16 +352,7 @@ router.get("/ziina/booking/success", async (req, res) => {
 
     const normalizedStatus = String(result.status || "").toLowerCase();
 
-    const successfulStatuses = [
-      "completed",
-      "paid",
-      "succeeded",
-      "success",
-      "successful",
-      "captured",
-      "processed",
-      "requires_capture",
-    ];
+    const successfulStatuses = ["completed"];
 
     if (!successfulStatuses.includes(normalizedStatus)) {
       console.warn("Ziina booking payment is not successful:", {
