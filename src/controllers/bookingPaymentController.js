@@ -2,13 +2,13 @@
 
 const db = require('../db/knex');
 const ziinaService = require('../services/ziina');
-const { spendWalletBalance, addWalletBalance } = require('./walletController');
+const { spendWalletBalance } = require('./walletController');
 
 /**
  * Calculate payment split between wallet and card
  */
-async function calculatePaymentSplit(userId, totalAmount) {
-  const wallet = await db('wallets').where({ user_id: userId }).first();
+async function calculatePaymentSplit(userId, totalAmount, trx = db) {
+  const wallet = await trx('wallets').where({ user_id: userId }).first();
   const walletBalance = wallet ? Number(wallet.balance_aed) : 0;
 
   if (walletBalance >= totalAmount) {
@@ -119,6 +119,11 @@ const payForBooking = async (req, res, next) => {
     const { id: bookingId } = req.params;
     const { payment_method, use_wallet, use_stamp_reward } = req.body;
     const userId = req.user.sub;
+
+    await trx.raw(
+      "SELECT pg_advisory_xact_lock(hashtext(?))",
+      [`booking-payment:${bookingId}`]
+    );
 
     const booking = await trx('bookings')
       .where({ id: bookingId, user_id: userId })
@@ -287,8 +292,49 @@ const payForBooking = async (req, res, next) => {
 
     // OPTION 3: SPLIT PAYMENT (Wallet + Ziina)
     if (payment_method === 'split' || use_wallet === true) {
-      const split = await calculatePaymentSplit(userId, totalAmount);
+      // Reuse an existing pending split payment for this booking.
+      // This prevents charging the wallet portion again on retry.
+      const existingPendingSplit = await trx('payment_transactions')
+        .where({
+          user_id: userId,
+          booking_id: bookingId,
+          provider: 'ziina',
+          type: 'booking_payment',
+          status: 'pending',
+        })
+        .whereRaw(
+          "COALESCE((metadata->>'split_payment')::boolean, false) = true"
+        )
+        .orderBy('created_at', 'desc')
+        .first();
 
+      if (
+        existingPendingSplit?.provider_payment_id &&
+        existingPendingSplit?.metadata?.payment_url
+      ) {
+        await trx.commit();
+
+        return res.json({
+          ok: true,
+          booking_id: bookingId,
+          payment_method: 'split',
+          provider: 'ziina',
+          wallet_amount: Number(
+            existingPendingSplit.metadata.wallet_amount || 0
+          ),
+          card_amount: Number(
+            existingPendingSplit.metadata.card_amount ||
+            existingPendingSplit.amount_aed ||
+            0
+          ),
+          payment_url: existingPendingSplit.metadata.payment_url,
+          payment_intent_id: existingPendingSplit.provider_payment_id,
+          transaction_id: existingPendingSplit.id,
+          reused: true,
+        });
+      }
+
+      const split = await calculatePaymentSplit(userId, totalAmount, trx);
       if (split.wallet_amount === 0) {
         await trx.rollback();
         return res.status(400).json({
@@ -317,12 +363,13 @@ const payForBooking = async (req, res, next) => {
         booking_id: bookingId,
         payment_method_type: 'wallet',
         succeeded_at: trx.fn.now(),
-        metadata: { split_payment: true, wallet_portion: true },
+        metadata: {
+          split_payment: true,
+          wallet_portion: true,
+        },
         created_at: trx.fn.now(),
         updated_at: trx.fn.now(),
       });
-
-      await trx.commit();
 
       const ziinaResult = await ziinaService.createBookingPaymentIntent(
         userId,
@@ -339,28 +386,17 @@ const payForBooking = async (req, res, next) => {
       );
 
       if (!ziinaResult.ok) {
-        // refund wallet portion if Ziina payment intent creation fails
-        const refundTrx = await db.transaction();
-        try {
-          await addWalletBalance(
-            userId,
-            split.wallet_amount,
-            'Refund - Split payment failed',
-            bookingId,
-            'refund',
-            refundTrx
-          );
-          await refundTrx.commit();
-        } catch (refundError) {
-          await refundTrx.rollback();
-          console.error('Split payment wallet refund failed:', refundError);
-        }
+        // Wallet deduction is still inside this transaction,
+        // so rolling back restores it automatically.
+        await trx.rollback();
 
         return res.status(400).json({
           error: ziinaResult.error,
           wallet_refunded: true,
         });
       }
+
+      await trx.commit();
 
       return res.json({
         ok: true,
@@ -374,7 +410,6 @@ const payForBooking = async (req, res, next) => {
         transaction_id: ziinaResult.transaction_id,
       });
     }
-
     await trx.rollback();
     return res.status(400).json({
       error: 'Invalid payment method',

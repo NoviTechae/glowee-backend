@@ -425,6 +425,32 @@ router.get("/ziina/booking/cancel", async (req, res) => {
         );
 
         await trx("payment_transactions")
+          .where({
+            user_id: transaction.user_id,
+            booking_id: bookingId,
+            provider: "wallet",
+            type: "booking_payment",
+            status: "succeeded",
+          })
+          .whereRaw(
+            "COALESCE((metadata->>'wallet_portion')::boolean, false) = true"
+          )
+          .update({
+            status: "refunded",
+            refunded_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
+            metadata: trx.raw(
+              `COALESCE(metadata, '{}'::jsonb) || ?::jsonb`,
+              [
+                JSON.stringify({
+                  wallet_refunded: true,
+                  wallet_refund_reason: "booking_payment_cancelled",
+                }),
+              ]
+            ),
+          });
+
+        await trx("payment_transactions")
           .where({ id: transaction.id })
           .update({
             status: "cancelled",
