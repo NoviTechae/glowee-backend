@@ -19,6 +19,9 @@ function withSalonCounts(q) {
       `(SELECT COUNT(*) FROM branches b WHERE b.salon_id = s.id AND b.is_active = true)::int AS active_branches`
     ),
     db.raw(
+      `(SELECT COUNT(*) FROM branches b WHERE b.salon_id = s.id AND b.lat = 0 AND b.lng = 0)::int AS unplaced_branches`
+    ),
+    db.raw(
       `(SELECT COUNT(*) FROM services sv WHERE sv.salon_id = s.id AND sv.is_active = true)::int AS active_services`
     ),
     db.raw(
