@@ -7,6 +7,7 @@ const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
 const { completeBooking } = require("../controllers/bookingController");
+const { syncSalonType } = require("../utils/salonType");
 
 const uploadDir = path.join(process.cwd(), "public", "uploads", "salons");
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -82,7 +83,7 @@ const UpdateSalonSchema = z.object({
   discount_percent: z.number().int().min(0).max(100).nullable().optional(),
 }).strict();
 
-const BranchCreateSchema = z.object({
+const BranchFields = z.object({
   name: z.string().min(2),
   phone: z.string().nullable().optional(),
   email: z.string().email().nullable().optional(),
@@ -94,11 +95,20 @@ const BranchCreateSchema = z.object({
   address_line: z.string().nullable().optional(),
   lat: z.coerce.number(),
   lng: z.coerce.number(),
+  offers_in_salon: z.coerce.boolean().optional().default(true),
   supports_home_services: z.coerce.boolean().optional().default(false),
+  home_min_order_aed: z.coerce.number().min(0).max(100000).nullable().optional(),
   is_active: z.coerce.boolean().optional().default(true),
 }).strict();
-
-const BranchUpdateSchema = BranchCreateSchema.partial();
+ 
+const OFFERS_SOMETHING = "A location must welcome customers, offer home service, or both.";
+ 
+const BranchCreateSchema = BranchFields.refine(
+  (b) => b.offers_in_salon || b.supports_home_services,
+  { message: OFFERS_SOMETHING }
+);
+ 
+const BranchUpdateSchema = BranchFields.partial();
 const HoursUpsertSchema = z.object({
   // 0=Sunday ... 6=Saturday
   day_of_week: z.coerce.number().min(0).max(6),
@@ -519,10 +529,6 @@ router.post(
   }
 );
 
-// =====================================================
-// Salon: Branches
-// =====================================================
-
 // GET /dashboard/salon/branches
 router.get("/branches", dashboardAuthRequired, requireSalon, async (req, res, next) => {
   try {
@@ -533,113 +539,125 @@ router.get("/branches", dashboardAuthRequired, requireSalon, async (req, res, ne
     next(e);
   }
 });
-
-
+ 
 // POST /dashboard/salon/branches
 router.post("/branches", dashboardAuthRequired, requireSalon, async (req, res, next) => {
   try {
     const salon_id = req.dashboard.salon_id;
-
-    // ✅ هذا المكان الصحيح
-    const salon = await db("salons")
-      .where({ id: salon_id })
-      .first("id", "salon_type");
-
-    if (!salon) {
-      return res.status(404).json({ error: "Salon not found" });
-    }
-
-    if (salon.salon_type === "home") {
-      const existingCount = await db("branches")
-        .where({ salon_id })
-        .count("* as c")
-        .first();
-
-      if (Number(existingCount?.c || 0) >= 1) {
-        return res.status(400).json({
-          error: "Home service salons can only have one internal branch",
-        });
-      }
-    }
-
-    // 👇 بعدها يكمل الكود الطبيعي
     const body = BranchCreateSchema.parse(req.body);
-
-    const [b] = await db("branches")
-      .insert({
-        salon_id,
-        name: body.name,
-        phone: body.phone ?? null,
-        email: body.email ?? null,
-        whatsapp: body.whatsapp ?? null,
-        instagram: body.instagram ?? null,
-        country: body.country,
-        city: body.city,
-        area: body.area,
-        address_line: body.address_line ?? null,
-        lat: body.lat,
-        lng: body.lng,
-        geo: geoRaw(body.lng, body.lat),
-        supports_home_services: body.supports_home_services,
-        is_active: body.is_active,
-        created_at: db.fn.now(),
-        updated_at: db.fn.now(),
-      })
-      .returning("*");
-
+ 
+    const b = await db.transaction(async (trx) => {
+      const [branch] = await trx("branches")
+        .insert({
+          salon_id,
+          name: body.name,
+          phone: body.phone ?? null,
+          email: body.email ?? null,
+          whatsapp: body.whatsapp ?? null,
+          instagram: body.instagram ?? null,
+          country: body.country,
+          city: body.city,
+          area: body.area,
+          address_line: body.address_line ?? null,
+          lat: body.lat,
+          lng: body.lng,
+          geo: geoRaw(body.lng, body.lat),
+          offers_in_salon: body.offers_in_salon,
+          supports_home_services: body.supports_home_services,
+          // Distance fallback until the salon picks its areas.
+          home_radius_km: body.supports_home_services ? 15 : null,
+          home_min_order_aed: body.supports_home_services ? body.home_min_order_aed ?? null : null,
+          is_active: body.is_active,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning("*");
+ 
+      await syncSalonType(salon_id, trx);
+      return branch;
+    });
+ 
     res.json({ branch: b });
-
   } catch (e) {
     next(e);
   }
 });
-
+ 
 // GET /dashboard/salon/branches/:branchId
 router.get("/branches/:branchId", dashboardAuthRequired, requireSalon, async (req, res, next) => {
   try {
     const salon_id = req.dashboard.salon_id;
-    const { branchId } = req.params;
-
-    const branch = await db("branches").where({ id: branchId, salon_id }).first();
+    const branch = await db("branches").where({ id: req.params.branchId, salon_id }).first();
     if (!branch) return res.status(404).json({ error: "Branch not found" });
-
     res.json({ branch });
   } catch (e) {
     next(e);
   }
 });
-
+ 
 // PUT /dashboard/salon/branches/:branchId
 router.put("/branches/:branchId", dashboardAuthRequired, requireSalon, async (req, res, next) => {
   try {
     const salon_id = req.dashboard.salon_id;
     const { branchId } = req.params;
     const patch = BranchUpdateSchema.parse(req.body);
-
-    const exists = await db("branches").where({ id: branchId, salon_id }).first("id");
-    if (!exists) return res.status(404).json({ error: "Branch not found" });
-
+ 
+    const current = await db("branches")
+      .where({ id: branchId, salon_id })
+      .first("id", "offers_in_salon", "supports_home_services", "home_radius_km");
+    if (!current) return res.status(404).json({ error: "Branch not found" });
+ 
+    const nextInSalon = patch.offers_in_salon ?? current.offers_in_salon;
+    const nextHome = patch.supports_home_services ?? current.supports_home_services;
+    if (!nextInSalon && !nextHome) return res.status(400).json({ error: OFFERS_SOMETHING });
+ 
     const update = { ...patch, updated_at: db.fn.now() };
     if (patch.lat != null && patch.lng != null) update.geo = geoRaw(patch.lng, patch.lat);
-
-    const [updated] = await db("branches").where({ id: branchId }).update(update).returning("*");
+ 
+    if (!nextHome) {
+      update.home_radius_km = null;
+      update.home_min_order_aed = null;
+    } else if (current.home_radius_km == null) {
+      update.home_radius_km = 15;
+    }
+ 
+    const updated = await db.transaction(async (trx) => {
+      const [row] = await trx("branches").where({ id: branchId }).update(update).returning("*");
+ 
+      // Turning home service off also removes its areas.
+      if (!nextHome) await trx("branch_home_zones").where({ branch_id: branchId }).del();
+ 
+      await syncSalonType(salon_id, trx);
+      return row;
+    });
+ 
     res.json({ branch: updated });
   } catch (e) {
     next(e);
   }
 });
-
-// DELETE /dashboard/salon/branches/:branchId  (HARD delete)
+ 
+// DELETE /dashboard/salon/branches/:branchId
 router.delete("/branches/:branchId", dashboardAuthRequired, requireSalon, async (req, res, next) => {
   try {
     const salon_id = req.dashboard.salon_id;
     const { branchId } = req.params;
-
-    // تأكيد الملكية
+ 
     const exists = await db("branches").where({ id: branchId, salon_id }).first("id");
     if (!exists) return res.status(404).json({ error: "Branch not found" });
-
-    await db("branches").where({ id: branchId }).del(); // branch_hours ON DELETE CASCADE
+ 
+    const hasBookings = await db("bookings").where({ branch_id: branchId }).first("id");
+    if (hasBookings) {
+      return res.status(409).json({
+        error: "This location has bookings, so it can't be deleted. Close it instead.",
+      });
+    }
+ 
+    await db.transaction(async (trx) => {
+      await trx("branches").where({ id: branchId }).del();
+      await syncSalonType(salon_id, trx);
+    });
+ 
     res.json({ ok: true });
   } catch (e) {
     next(e);
@@ -1460,5 +1478,7 @@ router.get("/reviews/stats", dashboardAuthRequired, requireSalon, async (req, re
 });
 
 router.use("/blocked-slots", require("./blockedTimeSlots"));  // ← Here! ✅
+router.use(require("./salonHomeZones"));
+
 
 module.exports = router;
