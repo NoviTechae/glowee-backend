@@ -13,15 +13,15 @@ if (!ZIINA_API_KEY) {
   console.warn("ZIINA_API_KEY is not set");
 }
 
-console.log(
-  "ZIINA KEY SHA256:",
-  crypto.createHash("sha256").update(ZIINA_API_KEY).digest("hex")
-);
-console.log("ZIINA KEY EXISTS:", !!ZIINA_API_KEY);
-console.log("ZIINA KEY PREFIX:", ZIINA_API_KEY.slice(0, 12));
-console.log("ZIINA KEY SUFFIX:", ZIINA_API_KEY.slice(-8));
-console.log("ZIINA KEY LENGTH:", ZIINA_API_KEY.length);
-console.log("ZIINA API URL:", ZIINA_API_URL);
+// console.log(
+//   "ZIINA KEY SHA256:",
+//   crypto.createHash("sha256").update(ZIINA_API_KEY).digest("hex")
+// );
+// console.log("ZIINA KEY EXISTS:", !!ZIINA_API_KEY);
+// console.log("ZIINA KEY PREFIX:", ZIINA_API_KEY.slice(0, 12));
+// console.log("ZIINA KEY SUFFIX:", ZIINA_API_KEY.slice(-8));
+// console.log("ZIINA KEY LENGTH:", ZIINA_API_KEY.length);
+// console.log("ZIINA API URL:", ZIINA_API_URL);
 
 const ziinaClient = axios.create({
   baseURL: ZIINA_API_URL,

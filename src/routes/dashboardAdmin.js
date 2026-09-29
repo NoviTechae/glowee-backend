@@ -66,6 +66,16 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
   try {
     const { salon, account } = CreateSalonSchema.parse(req.body);
 
+    const existing = await db("dashboard_accounts")
+      .where({ email: account.email.toLowerCase() })
+      .first("id");
+
+    if (existing) {
+      return res.status(409).json({
+        error: "This email already has a Glowee dashboard account. Use a different email.",
+      });
+    }
+
     const created = await db.transaction(async (trx) => {
       const [s] = await trx("salons")
         .insert({
