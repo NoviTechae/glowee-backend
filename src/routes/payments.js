@@ -250,6 +250,15 @@ router.get("/verify/ziina/:paymentIntentId", authRequired, async (req, res, next
         return res.status(500).json({ error: successResult.error });
       }
 
+      if (successResult.booking_unavailable) {
+        return res.json({
+          ok: true,
+          status: "booking_unavailable",
+          refunded_to_wallet: true,
+          refund_amount: successResult.refund_amount,
+        });
+      }
+
       return res.json({
         ok: true,
         status: "succeeded",
@@ -367,6 +376,17 @@ router.get("/ziina/booking/success", async (req, res) => {
       return res.status(500).send("Failed to confirm booking");
     }
 
+    if (successResult.booking_unavailable) {
+      return res.send(`<!doctype html><html><head><meta charset="utf-8"/>
+        <meta name="viewport" content="width=device-width,initial-scale=1"/>
+        <title>Time no longer available</title></head>
+        <body style="font-family:Arial,sans-serif;background:#f8f5f2;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;text-align:center">
+        <div style="max-width:420px;background:#fff;border-radius:16px;padding:24px">
+        <h1 style="margin:0 0 12px;font-size:24px">This time is no longer available</h1>
+        <p style="margin:0;color:#555">Your payment of AED ${Number(successResult.refund_amount).toFixed(2)} was added to your Glowee wallet. You can use it to book another time.</p>
+        </div></body></html>`);
+    }
+
     return res.redirect(
       `/payments/ziina/booking/done?booking_id=${encodeURIComponent(
         String(bookingId)
@@ -390,6 +410,10 @@ router.get("/ziina/booking/cancel", async (req, res) => {
       await trx.rollback();
       return res.status(400).send("Missing booking_id");
     }
+
+    await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [
+      `booking-payment:${bookingId}`,
+    ]);
 
     const transaction = await trx("payment_transactions")
       .where({

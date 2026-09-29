@@ -3,6 +3,7 @@ const router = require("express").Router();
 const { z } = require("zod");
 const db = require("../db/knex");
 const authRequired = require("../middleware/authRequired");
+const { whereBookingHoldsSlot } = require("../utils/bookingHold");
 
 // Body schema
 const BodySchema = z
@@ -195,13 +196,18 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     const serviceIds = Array.from(new Set(saRows.map((r) => r.service_id)));
     const ACTIVE_STATUSES = ["pending", "confirmed"];
 
+    // One booking at a time per branch, so two customers can't take the same slot.
+    await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [
+      `branch-booking:${branchId}`,
+    ]);
+
     async function staffIsFree(staffId) {
       const overlap = await trx("booking_item_assignments as bia")
         .join("booking_items as bi", "bi.id", "bia.booking_item_id")
         .join("bookings as b", "b.id", "bi.booking_id")
         .where("bia.staff_id", staffId)
         .andWhere("bia.branch_id", branchId)
-        .whereIn("b.status", ACTIVE_STATUSES)
+        .modify((qb) => whereBookingHoldsSlot(qb, trx))
         .andWhere("bia.starts_at", "<", end.toISOString())
         .andWhere("bia.ends_at", ">", start.toISOString())
         .first("bia.id");
@@ -394,7 +400,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
   } catch (e) {
     try {
       await trx.rollback();
-    } catch {}
+    } catch { }
     next(e);
   }
 });

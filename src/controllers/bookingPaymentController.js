@@ -3,6 +3,7 @@
 const db = require('../db/knex');
 const ziinaService = require('../services/ziina');
 const { spendWalletBalance } = require('./walletController');
+const { hasSlotConflict } = require("../utils/bookingHold");
 
 /**
  * Calculate payment split between wallet and card
@@ -137,6 +138,12 @@ const payForBooking = async (req, res, next) => {
     if (booking.status !== 'pending') {
       await trx.rollback();
       return res.status(400).json({ error: 'Booking already processed' });
+    }
+        if (await hasSlotConflict(bookingId, trx)) {
+      await trx.rollback();
+      return res.status(409).json({
+        error: "This time is no longer available. Please choose another time.",
+      });
     }
 
     const totalAmount = Number(booking.total_aed);

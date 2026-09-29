@@ -1,6 +1,7 @@
 // src/routes/publicAvailabilitySlots.js
 const router = require("express").Router();
 const db = require("../db/knex");
+const { whereBookingHoldsSlot } = require("../utils/bookingHold");
 
 function isUuid(v) {
   return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
@@ -121,7 +122,7 @@ router.get("/:salonId/branches/:branchId/availability/:availabilityId/slots", as
       .join("bookings as b", "b.id", "bi.booking_id")
       .where("bia.branch_id", branchId)
       .andWhere("bi.service_availability_id", availabilityId)
-      .whereIn("b.status", ["pending", "confirmed"])
+      .modify((qb) => whereBookingHoldsSlot(qb, db))
       .andWhere("bia.starts_at", ">=", dayStartIso)
       .andWhere("bia.starts_at", "<=", dayEndIso)
       .select(["bia.starts_at", "bia.ends_at"]);

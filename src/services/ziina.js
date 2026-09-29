@@ -4,6 +4,7 @@ const db = require("../db/knex");
 const crypto = require("crypto");
 const { sendGiftNotification } = require("./whatsapp");
 const { sendGiftSms } = require("./sms");
+const { hasSlotConflict } = require("../utils/bookingHold");
 
 const ZIINA_API_URL = "https://api-v2.ziina.com/api";
 const ZIINA_API_KEY = (process.env.ZIINA_API_KEY || "").trim();
@@ -457,12 +458,23 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
   try {
     console.log("ZIINA SUCCESS paymentIntentId =>", paymentIntentId);
 
-    const transaction = await trx("payment_transactions")
+    let transaction = await trx("payment_transactions")
       .where({
         provider_payment_id: paymentIntentId,
         provider: "ziina",
       })
       .first();
+
+    // Same lock as the booking payment and cancel flows, then re-read,
+    // because the booking may have been cancelled or expired meanwhile.
+    if (transaction?.type === "booking_payment" && transaction.booking_id) {
+      await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [
+        `booking-payment:${transaction.booking_id}`,
+      ]);
+      transaction = await trx("payment_transactions")
+        .where({ id: transaction.id })
+        .first();
+    }
 
     console.log("ZIINA SUCCESS transaction =>", transaction);
 
@@ -474,17 +486,29 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       };
     }
 
-    if (transaction.status === "succeeded") {
+    // Any final state means this payment was already handled. Never process it twice.
+    const alreadyHandled = ["succeeded", "refunded_to_wallet", "refunded"];
+
+    if (alreadyHandled.includes(transaction.status)) {
       await trx.commit();
+      const md =
+        typeof transaction.metadata === "object" && transaction.metadata !== null
+          ? transaction.metadata
+          : {};
+
       return {
         ok: true,
         already_processed: true,
+        booking_unavailable: md.refund_reason === "booking_unavailable",
+        refunded_to_wallet: transaction.status === "refunded_to_wallet",
+        refund_amount: Number(md.refund_amount ?? transaction.amount_aed ?? 0),
         transaction_id: transaction.id,
         booking_id: transaction.booking_id || null,
         gift_id: transaction.gift_id || null,
         amount: Number(transaction.amount_aed || 0),
       };
     }
+
 
     let paymentMethodType = "card";
     let cardLast4 = null;
@@ -546,6 +570,97 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
     }
 
     if (transaction.type === "booking_payment" && transaction.booking_id) {
+      const bookingRow = await trx("bookings")
+        .where({ id: transaction.booking_id })
+        .forUpdate()
+        .first();
+
+      const slotStillFree =
+        bookingRow?.status === "pending" &&
+        !(await hasSlotConflict(transaction.booking_id, trx));
+
+      // The booking was cancelled, expired, or its time was taken while the
+      // customer was paying. Don't confirm it: put the money in their wallet.
+      if (bookingRow?.status !== "confirmed" && !slotStillFree) {
+        const { addWalletBalance } = require("../controllers/walletController");
+
+        // Card amount just paid, plus any wallet portion still held for this booking.
+        const walletPortionRows =
+          bookingRow?.status === "pending"
+            ? await trx("payment_transactions")
+              .where({
+                booking_id: transaction.booking_id,
+                type: "booking_payment",
+                provider: "wallet",
+                status: "succeeded",
+              })
+              .where("amount_aed", ">", 0)
+              .select(["id", "amount_aed"])
+            : [];
+
+        const refundAmount = Number(
+          (
+            Number(transaction.amount_aed || 0) +
+            walletPortionRows.reduce((s, p) => s + Number(p.amount_aed), 0)
+          ).toFixed(2)
+        );
+
+        await addWalletBalance(
+          transaction.user_id,
+          refundAmount,
+          `Refund - booking time no longer available #${transaction.booking_id}`,
+          transaction.booking_id,
+          "refund",
+          trx
+        );
+
+        await trx("payment_transactions")
+          .where({ id: transaction.id })
+          .update({
+            status: "refunded_to_wallet",
+            refunded_at: trx.fn.now(),
+            metadata: {
+              ...existingMetadata,
+              ziina_payment_intent: paymentIntentData,
+              refund_destination: "wallet",
+              refund_reason: "booking_unavailable",
+               refund_amount: refundAmount,
+            },
+            updated_at: trx.fn.now(),
+          });
+
+        if (walletPortionRows.length) {
+          await trx("payment_transactions")
+            .whereIn(
+              "id",
+              walletPortionRows.map((p) => p.id)
+            )
+            .update({
+              status: "refunded",
+              refunded_at: trx.fn.now(),
+              updated_at: trx.fn.now(),
+            });
+        }
+
+        if (bookingRow?.status === "pending") {
+          await trx("bookings")
+            .where({ id: transaction.booking_id })
+            .update({ status: "cancelled", updated_at: trx.fn.now() });
+        }
+
+        await trx.commit();
+
+        return {
+          ok: true,
+          booking_unavailable: true,
+          refunded_to_wallet: true,
+          refund_amount: refundAmount,
+          transaction_id: transaction.id,
+          booking_id: transaction.booking_id,
+        };
+      }
+
+
       const existingSucceededBookingPayment = await trx("payment_transactions")
         .where({
           booking_id: transaction.booking_id,
@@ -626,42 +741,42 @@ async function handlePaymentIntentSuccess(paymentIntentId, paymentIntentData = {
       }
     }
 
-if (transaction.type === "gift_purchase" && transaction.gift_id) {
-  const gift = await trx("gifts")
-    .where({ id: transaction.gift_id })
-    .first();
+    if (transaction.type === "gift_purchase" && transaction.gift_id) {
+      const gift = await trx("gifts")
+        .where({ id: transaction.gift_id })
+        .first();
 
-  if (gift) {
-    await trx("gifts")
-      .where({ id: transaction.gift_id })
-      .update({
-        status: "active",
-      });
+      if (gift) {
+        await trx("gifts")
+          .where({ id: transaction.gift_id })
+          .update({
+            status: "active",
+          });
 
-    const { addPoints } = require("../controllers/rewardController");
+        const { addPoints } = require("../controllers/rewardController");
 
-    const alreadyRewarded = await trx("reward_transactions")
-      .where({
-        user_id: transaction.user_id,
-        type: "gift_sent",
-        ref_id: transaction.gift_id,
-      })
-      .first();
+        const alreadyRewarded = await trx("reward_transactions")
+          .where({
+            user_id: transaction.user_id,
+            type: "gift_sent",
+            ref_id: transaction.gift_id,
+          })
+          .first();
 
-    if (!alreadyRewarded) {
-      await addPoints(
-        transaction.user_id,
-        10,
-        "gift_sent",
-        transaction.gift_id,
-        trx
-      );
-    }
+        if (!alreadyRewarded) {
+          await addPoints(
+            transaction.user_id,
+            10,
+            "gift_sent",
+            transaction.gift_id,
+            trx
+          );
+        }
 
-    const metadata =
-      typeof transaction.metadata === "object" && transaction.metadata !== null
-        ? transaction.metadata
-        : {};
+        const metadata =
+          typeof transaction.metadata === "object" && transaction.metadata !== null
+            ? transaction.metadata
+            : {};
 
         const senderName =
           metadata.sender_name ||

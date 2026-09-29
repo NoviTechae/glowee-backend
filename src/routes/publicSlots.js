@@ -1,6 +1,7 @@
 // src/routes/publicSlots.js
 const router = require("express").Router();
 const db = require("../db/knex");
+const { whereBookingHoldsSlot } = require("../utils/bookingHold");
 
 // -------- helpers --------
 function parseHHMMToMinutes(t) {
@@ -98,7 +99,7 @@ router.get(
         .join("bookings as b", "b.id", "bi.booking_id")
         .where("bia.branch_id", branchId)
         .andWhere("b.branch_id", branchId)
-        .whereIn("b.status", ["pending", "confirmed"])
+        .modify((qb) => whereBookingHoldsSlot(qb, db))
         .andWhere("bia.starts_at", ">=", dayStartIso(date))
         .andWhere("bia.starts_at", "<=", dayEndIso(date))
         .select(["bia.starts_at", "bia.ends_at"]);

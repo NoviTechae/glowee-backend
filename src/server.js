@@ -3,6 +3,7 @@ require("dotenv").config();
 const app = require("./app");
 const cron = require("node-cron");
 const { expireGifts } = require("./jobs/expireGifts");
+const { startExpireUnpaidBookingsJob } = require("./jobs/expireUnpaidBookings");
 
 const PORT = process.env.PORT || 8000;
 
@@ -18,8 +19,12 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 
 // Run daily at 2 AM to expire old gifts
 cron.schedule('0 2 * * *', async () => {
-  console.log('🕐 Running daily cron jobs...');
-  await expireGifts();
+  try {
+    console.log('🕐 Running daily cron jobs...');
+    await expireGifts();
+  } catch (e) {
+    console.error('expireGifts failed:', e?.message || e);
+  }
 });
 
 // Optional: Run every hour to check for soon-to-expire gifts (send reminders)
@@ -27,6 +32,9 @@ cron.schedule('0 2 * * *', async () => {
 //   console.log('🕐 Checking for expiring gifts...');
 //   // TODO: Send reminder to recipients about gifts expiring soon
 // });
+
+// Every 5 minutes: cancel unpaid bookings, free their slots, return held wallet money
+startExpireUnpaidBookingsJob();
 
 // ===== GRACEFUL SHUTDOWN =====
 

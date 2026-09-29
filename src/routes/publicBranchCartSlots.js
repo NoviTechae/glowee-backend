@@ -1,6 +1,7 @@
 // src/routes/publicBranchCartSlots.js
 const router = require("express").Router();
 const db = require("../db/knex");
+const { whereBookingHoldsSlot } = require("../utils/bookingHold");
 
 function parseHHMMToMinutes(t) {
   if (!t) return null;
@@ -61,6 +62,8 @@ router.get("/:salonId/branches/:branchId/slots", async (req, res, next) => {
     // overlap condition: starts_at < candidateEnd AND ends_at > candidateStart
     async function isFree(startISO, endISO) {
       const row = await db("booking_item_assignments as bia")
+        .join("bookings as b", "b.id", "bia.booking_id")
+        .modify((qb) => whereBookingHoldsSlot(qb, db))
         .where("bia.branch_id", branchId)
         .andWhere("bia.starts_at", "<", endISO)
         .andWhere("bia.ends_at", ">", startISO)

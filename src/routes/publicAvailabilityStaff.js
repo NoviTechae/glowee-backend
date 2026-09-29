@@ -2,6 +2,7 @@
 const router = require("express").Router();
 const { z } = require("zod");
 const db = require("../db/knex");
+const { whereBookingHoldsSlot } = require("../utils/bookingHold");
 
 const QuerySchema = z.object({
   start_iso: z.string().min(10),
@@ -44,18 +45,24 @@ router.get(
       const rows = await db("staff as st")
         .join("branch_staff as bs", "bs.staff_id", "st.id")
         .join("staff_services as ss", "ss.staff_id", "st.id")
-        .leftJoin("booking_item_assignments as bia", function () {
-          this.on("bia.staff_id", "st.id")
-            .andOn("bia.branch_id", "=", db.raw("?", [branchId]))
-            .andOn("bia.starts_at", "<", db.raw("?", [end.toISOString()]))
-            .andOn("bia.ends_at", ">", db.raw("?", [start.toISOString()]));
-        })
+        .leftJoin(
+          db("booking_item_assignments as bia")
+            .join("bookings as b", "b.id", "bia.booking_id")
+            .modify((qb) => whereBookingHoldsSlot(qb, db))
+            .where("bia.branch_id", branchId)
+            .andWhere("bia.starts_at", "<", end.toISOString())
+            .andWhere("bia.ends_at", ">", start.toISOString())
+            .select("bia.staff_id")
+            .as("busy"),
+          "busy.staff_id",
+          "st.id"
+        )
         .where("st.salon_id", salonId)
         .andWhere("bs.branch_id", branchId)
         .andWhere("bs.is_active", true)
         .andWhere("st.is_active", true)
         .andWhere("ss.service_id", sa.service_id)
-        .whereNull("bia.id")
+        .whereNull("busy.staff_id")
         .select(["st.id", "st.name"])
         .orderBy("st.created_at", "desc");
       return res.json({

@@ -3,6 +3,7 @@
 const router = require("express").Router();
 const db = require("../db/knex");
 const dashboardAuthRequired = require("../middleware/dashboardAuthRequired");
+const { addWalletBalance } = require("../controllers/walletController");
 
 function requireAdmin(req, res, next) {
   if (req.dashboard?.role !== "admin") {
@@ -36,11 +37,17 @@ router.get("/stats", async (req, res, next) => {
       .count("* as cancelled");
 
     const [{ today }] = await db("bookings")
-      .whereRaw("DATE(scheduled_at) = CURRENT_DATE")
+      .whereRaw(`
+    (scheduled_at AT TIME ZONE 'Asia/Dubai')::date =
+    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')::date
+  `)
       .count("* as today");
 
     const [{ this_month }] = await db("bookings")
-      .whereRaw("DATE_TRUNC('month', scheduled_at) = DATE_TRUNC('month', CURRENT_DATE)")
+      .whereRaw(`
+    DATE_TRUNC('month', scheduled_at AT TIME ZONE 'Asia/Dubai') =
+    DATE_TRUNC('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')
+  `)
       .count("* as this_month");
 
     res.json({
@@ -230,7 +237,7 @@ router.get("/", async (req, res, next) => {
 router.get("/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
-
+ 
     const booking = await db("bookings as b")
       .where("b.id", id)
       .leftJoin("users as u", "u.id", "b.user_id")
@@ -241,6 +248,7 @@ router.get("/:id", async (req, res, next) => {
         "b.user_id",
         "b.salon_id",
         "b.branch_id",
+        "b.gift_id",
         "b.scheduled_at",
         "b.mode",
         "b.status",
@@ -260,20 +268,33 @@ router.get("/:id", async (req, res, next) => {
         "br.address_line as branch_address",
       ])
       .first();
-
+ 
     if (!booking) return res.status(404).json({ error: "Booking not found" });
-
-    const items = await db("booking_items")
-      .where({ booking_id: id })
-      .select([
-        "id",
-        "service_name_snapshot",
-        "qty",
-        "price_aed_snapshot",
-        "duration_mins",
-        "line_total_aed",
-      ]);
-
+ 
+    const [items, payments, refunds] = await Promise.all([
+      db("booking_items")
+        .where({ booking_id: id })
+        .select([
+          "id",
+          "service_name_snapshot",
+          "qty",
+          "price_aed_snapshot",
+          "duration_mins",
+          "line_total_aed",
+        ]),
+      db("payment_transactions")
+        .where({ booking_id: id, type: "booking_payment" })
+        .whereIn("status", ["succeeded", "refunded"])
+        .select(["provider", "status", "amount_aed", "payment_method_type"]),
+      db("wallet_transactions")
+        .where({ ref_id: id, type: "refund", user_id: booking.user_id })
+        .select(["amount_aed", "created_at"])
+        .orderBy("created_at", "desc"),
+    ]);
+ 
+    const paidAed = payments.reduce((s, p) => s + Number(p.amount_aed || 0), 0);
+    const refundedAed = refunds.reduce((s, r) => s + Number(r.amount_aed || 0), 0);
+ 
     res.json({
       booking: {
         ...booking,
@@ -289,42 +310,136 @@ router.get("/:id", async (req, res, next) => {
         duration_mins: Number(it.duration_mins || 0),
         line_total_aed: Number(it.line_total_aed || 0),
       })),
+      payment: {
+        paid_aed: paidAed,
+        used_stamp_reward: payments.some(
+          (p) => p.payment_method_type === "stamp_reward"
+        ),
+      },
+      refund:
+        refundedAed > 0
+          ? { amount_aed: refundedAed, created_at: refunds[0].created_at }
+          : null,
     });
   } catch (e) {
     next(e);
   }
 });
-
+ 
 // POST /dashboard/admin/bookings/:id/cancel
+// Cancels the booking and refunds to the customer's wallet exactly what
+// they actually paid (card, wallet, or both). Unpaid bookings are just cancelled.
 router.post("/:id/cancel", async (req, res, next) => {
   try {
     const { id } = req.params;
-
-    const booking = await db("bookings").where({ id }).first();
-    if (!booking) {
-      return res.status(404).json({ error: "Booking not found" });
-    }
-
-    if (booking.status === "cancelled" || booking.status === "completed") {
-      return res.status(400).json({
-        error: `Cannot cancel ${booking.status} booking`,
-      });
-    }
-
-    await db("bookings")
-      .where({ id })
-      .update({
-        status: "cancelled",
-        updated_at: db.fn.now(),
-      });
-
-    res.json({
-      ok: true,
-      message: "Booking cancelled successfully",
+ 
+    const result = await db.transaction(async (trx) => {
+      // Same lock the payment flow uses, so a payment can't land mid-cancel.
+      await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [
+        `booking-payment:${id}`,
+      ]);
+ 
+      const booking = await trx("bookings").where({ id }).forUpdate().first();
+ 
+      if (!booking) {
+        return { status: 404, body: { error: "Booking not found" } };
+      }
+ 
+      if (booking.status !== "pending" && booking.status !== "confirmed") {
+        return {
+          status: 400,
+          body: { error: `This booking is already ${booking.status}.` },
+        };
+      }
+ 
+      // Only payments that actually went through and weren't refunded yet.
+      const paidRows = await trx("payment_transactions")
+        .where({ booking_id: id, type: "booking_payment", status: "succeeded" })
+        .forUpdate()
+        .select(["id", "amount_aed", "payment_method_type"]);
+ 
+      const refundAmount = Number(
+        paidRows.reduce((s, p) => s + Number(p.amount_aed || 0), 0).toFixed(2)
+      );
+      const usedStampReward = paidRows.some(
+        (p) => p.payment_method_type === "stamp_reward"
+      );
+ 
+      await trx("bookings")
+        .where({ id })
+        .update({ status: "cancelled", updated_at: trx.fn.now() });
+ 
+      // Stop an unfinished card payment for this booking from completing it later.
+      await trx("payment_transactions")
+        .where({ booking_id: id, type: "booking_payment", status: "pending" })
+        .update({ status: "cancelled", updated_at: trx.fn.now() });
+ 
+      let newBalance = null;
+ 
+      if (refundAmount > 0) {
+        const credit = await addWalletBalance(
+          booking.user_id,
+          refundAmount,
+          `Refund - booking cancelled by Glowee #${id}`,
+          id,
+          "refund",
+          trx
+        );
+        newBalance = credit.balance_after_aed;
+      }
+ 
+      if (paidRows.length) {
+        await trx("payment_transactions")
+          .whereIn(
+            "id",
+            paidRows.map((p) => p.id)
+          )
+          .update({
+            status: "refunded",
+            refunded_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
+            metadata: trx.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [
+              JSON.stringify({
+                refunded_to_wallet: true,
+                refund_reason: "admin_cancelled",
+              }),
+            ]),
+          });
+      }
+ 
+      let message;
+      if (refundAmount > 0) {
+        message = `Booking cancelled. AED ${refundAmount.toFixed(
+          2
+        )} refunded to the customer's wallet.`;
+      } else if (booking.gift_id) {
+        message =
+          "Booking cancelled. It was paid with a gift, so nothing was refunded to the wallet.";
+      } else if (usedStampReward) {
+        message =
+          "Booking cancelled. It was paid with a loyalty reward, which wasn't returned automatically.";
+      } else {
+        message =
+          "Booking cancelled. The customer hadn't paid, so there was nothing to refund.";
+      }
+ 
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          refund:
+            refundAmount > 0
+              ? { amount_aed: refundAmount, new_balance_aed: newBalance }
+              : null,
+          message,
+        },
+      };
     });
+ 
+    return res.status(result.status).json(result.body);
   } catch (e) {
     next(e);
   }
 });
-
+ 
 module.exports = router;

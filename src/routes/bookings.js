@@ -10,6 +10,8 @@ function overlap(qb, start, end) {
   return qb.where("bia.starts_at", "<", end).andWhere("bia.ends_at", ">", start);
 }
 
+const { whereBookingHoldsSlot } = require("../utils/bookingHold");
+
 const PreviewSchema = z.object({
   salon_id: z.string().uuid(),
   branch_id: z.string().uuid(),
@@ -115,6 +117,8 @@ router.post("/preview", async (req, res, next) => {
 
     // 5) time conflict
     const busyRows = await db("booking_item_assignments as bia")
+      .join("bookings as b", "b.id", "bia.booking_id")
+      .modify((qb) => whereBookingHoldsSlot(qb, db))
       .whereIn("bia.staff_id", filtered.map(s => s.id))
       .andWhere("bia.branch_id", body.branch_id)
       .modify(qb => overlap(qb, startsAt, endsAt))
@@ -155,8 +159,8 @@ router.get("/availability", async (req, res, next) => {
 
     // Validation
     if (!service_id || !branch_id || !date) {
-      return res.status(400).json({ 
-        error: "service_id, branch_id, and date are required" 
+      return res.status(400).json({
+        error: "service_id, branch_id, and date are required"
       });
     }
 
@@ -181,8 +185,8 @@ router.get("/availability", async (req, res, next) => {
       ]);
 
     if (!availability) {
-      return res.status(404).json({ 
-        error: "Service not available for this branch/mode" 
+      return res.status(404).json({
+        error: "Service not available for this branch/mode"
       });
     }
 
@@ -193,9 +197,9 @@ router.get("/availability", async (req, res, next) => {
       .first(["open_time", "close_time", "is_closed"]);
 
     if (!branchHours || branchHours.is_closed) {
-      return res.json({ 
+      return res.json({
         slots: [],
-        message: "Branch is closed on this day" 
+        message: "Branch is closed on this day"
       });
     }
 
@@ -217,9 +221,9 @@ router.get("/availability", async (req, res, next) => {
     const staffForService = await staffQuery;
 
     if (staffForService.length === 0) {
-      return res.json({ 
+      return res.json({
         slots: [],
-        message: staff_id ? "Staff not available" : "No staff available for this service" 
+        message: staff_id ? "Staff not available" : "No staff available for this service"
       });
     }
 
@@ -245,7 +249,7 @@ router.get("/availability", async (req, res, next) => {
         .join("bookings as b", "b.id", "bia.booking_id")
         .whereIn("bia.staff_id", staffIds)
         .andWhere("bia.branch_id", branch_id)
-        .whereIn("b.status", ["pending", "confirmed"])
+        .modify((qb) => whereBookingHoldsSlot(qb, db))
         .andWhere("bia.starts_at", "<", slotEnd)
         .andWhere("bia.ends_at", ">", slotStart)
         .distinct("bia.staff_id")
@@ -259,7 +263,7 @@ router.get("/availability", async (req, res, next) => {
         .andWhere("blocked_date", date)
         .andWhere("start_time", "<=", slot.start_time)
         .andWhere("end_time", ">", slot.start_time)
-        .andWhere(function() {
+        .andWhere(function () {
           // Either specific staff is blocked OR all staff are blocked
           this.whereIn("staff_id", staffIds).orWhereNull("staff_id");
         })
@@ -267,8 +271,8 @@ router.get("/availability", async (req, res, next) => {
 
       // If there's an "all staff" block, count all staff as blocked
       const hasAllStaffBlock = blockedStaffRows.some(row => row.staff_id === null);
-      const blockedStaffCount = hasAllStaffBlock 
-        ? totalStaff 
+      const blockedStaffCount = hasAllStaffBlock
+        ? totalStaff
         : blockedStaffRows.filter(row => row.staff_id !== null).length;
 
       // Calculate available staff
@@ -304,35 +308,35 @@ router.get("/availability", async (req, res, next) => {
  */
 function generateTimeSlots(openTime, closeTime, durationMins) {
   const slots = [];
-  
+
   // Parse times (format: "HH:MM:SS" or "HH:MM")
   const [openHour, openMin] = openTime.split(":").map(Number);
   const [closeHour, closeMin] = closeTime.split(":").map(Number);
-  
+
   // Convert to minutes from midnight
   let currentMins = openHour * 60 + openMin;
   const closeMins = closeHour * 60 + closeMin;
-  
+
   while (currentMins + durationMins <= closeMins) {
     const startHour = Math.floor(currentMins / 60);
     const startMin = currentMins % 60;
-    
+
     const endMins = currentMins + durationMins;
     const endHour = Math.floor(endMins / 60);
     const endMin = endMins % 60;
-    
+
     const startTime = `${String(startHour).padStart(2, '0')}:${String(startMin).padStart(2, '0')}:00`;
     const endTime = `${String(endHour).padStart(2, '0')}:${String(endMin).padStart(2, '0')}:00`;
-    
+
     slots.push({
       start_time: startTime,
       end_time: endTime,
     });
-    
+
     // Move to next slot (30 min intervals or service duration, whichever is smaller)
     currentMins += Math.min(30, durationMins);
   }
-  
+
   return slots;
 }
 
