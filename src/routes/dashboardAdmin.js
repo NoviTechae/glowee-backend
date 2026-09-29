@@ -559,5 +559,6 @@ router.use("/gift-themes", require("./adminGiftThemes"));
 router.use("/mobile-banners", require("./adminMobileBanners"));
 router.use("/feedback", require("./adminFeedback"));
 router.use("/partner-requests", require("./adminPartnerRequests"));
+router.use(require("./adminServiceAreas"));
 
 module.exports = router;

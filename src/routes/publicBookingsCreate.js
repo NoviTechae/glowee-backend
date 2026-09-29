@@ -4,6 +4,7 @@ const { z } = require("zod");
 const db = require("../db/knex");
 const authRequired = require("../middleware/authRequired");
 const { whereBookingHoldsSlot } = require("../utils/bookingHold");
+const { coverageForPoint, rulesForDay } = require("../utils/homeCoverage");
 
 // Body schema
 const BodySchema = z
@@ -12,12 +13,14 @@ const BodySchema = z
     start_iso: z.string(),
     staff_id: z.string().uuid().nullable().optional(),
 
-    items: z.array(
-      z.object({
-        availability_id: z.string().uuid(),
-        qty: z.number().int().min(1),
-      })
-    ).min(1),
+    items: z
+      .array(
+        z.object({
+          availability_id: z.string().uuid(),
+          qty: z.number().int().min(1),
+        })
+      )
+      .min(1),
 
     contact_name: z.string().optional(),
     contact_phone: z.string().optional(),
@@ -44,6 +47,14 @@ const BodySchema = z
     redeem_mode: z.enum(["gift"]).optional(),
   })
   .strict();
+
+const DAY_INDEX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+function dubaiDayOfWeek(date) {
+  return DAY_INDEX[
+    new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Dubai", weekday: "short" }).format(date)
+  ];
+}
 
 function parseHHMMToMinutes(t) {
   if (!t) return null;
@@ -111,10 +122,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
         return res.status(400).json({ error: "address_line1 is required for home bookings" });
       }
 
-      if (
-        typeof body.latitude !== "number" ||
-        typeof body.longitude !== "number"
-      ) {
+      if (typeof body.latitude !== "number" || typeof body.longitude !== "number") {
         await trx.rollback();
         return res.status(400).json({ error: "latitude and longitude are required for home bookings" });
       }
@@ -146,24 +154,34 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       return res.status(400).json({ error: "This business only offers home service." });
     }
 
+    // Area rules for a home visit: which days, and any area minimum or visit fee.
+    let homeRules = null;
+
     if (body.mode === "home") {
       if (!branchRow.supports_home_services) {
         await trx.rollback();
         return res.status(400).json({ error: "This branch doesn't offer home service." });
       }
 
-      const covered = await trx("branches")
-        .where({ id: branchId })
-        .whereRaw(
-          "ST_DWithin(geo, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, home_radius_km * 1000)",
-          [body.longitude, body.latitude]
-        )
-        .first("id");
+      // Coverage is checked against the service address, not where the customer is now.
+      const coverage = await coverageForPoint(trx, branchId, body.longitude, body.latitude);
 
-      if (!covered) {
+      if (!coverage.covered) {
         await trx.rollback();
         return res.status(400).json({
-          error: "This address is outside the area this salon covers for home service.",
+          error: "This salon doesn't cover this address for home service.",
+          code: "ADDRESS_NOT_COVERED",
+        });
+      }
+
+      homeRules = rulesForDay(coverage, dubaiDayOfWeek(start));
+
+      if (!homeRules.allowed) {
+        await trx.rollback();
+        return res.status(400).json({
+          error: "This salon doesn't visit this area on that day. Choose another day.",
+          code: "DAY_NOT_COVERED",
+          service_days: coverage.days,
         });
       }
     }
@@ -227,7 +245,12 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       }
     }
 
-    const minOrder = Number(branchRow.home_min_order_aed || 0);
+    // An area's own visit fee replaces the per-service one.
+    if (body.mode === "home" && homeRules?.visitFee != null) {
+      fees = homeRules.visitFee;
+    }
+
+    const minOrder = Number(homeRules?.minOrder ?? branchRow.home_min_order_aed ?? 0);
 
     if (body.mode === "home" && minOrder > 0 && subtotal < minOrder) {
       await trx.rollback();
@@ -241,7 +264,6 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       });
     }
 
-
     const end = new Date(start.getTime() + totalDuration * 60 * 1000);
 
     const okHours = withinWorkingHours(hourRow.open_time, hourRow.close_time, start, end);
@@ -251,12 +273,9 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     }
 
     const serviceIds = Array.from(new Set(saRows.map((r) => r.service_id)));
-    const ACTIVE_STATUSES = ["pending", "confirmed"];
 
     // One booking at a time per branch, so two customers can't take the same slot.
-    await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [
-      `branch-booking:${branchId}`,
-    ]);
+    await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`branch-booking:${branchId}`]);
 
     async function staffIsFree(staffId) {
       const overlap = await trx("booking_item_assignments as bia")
@@ -321,8 +340,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
 
       let found = null;
       for (const c of candidates) {
-        const free = await staffIsFree(c.id);
-        if (free) {
+        if (await staffIsFree(c.id)) {
           found = c;
           break;
         }
@@ -356,7 +374,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       })
       .returning("*");
 
-    // ✅ حفظ العنوان تلقائياً بعد إنشاء الحجز المنزلي
+    // Save the home address to the customer's address book.
     if (body.mode === "home") {
       const latNum = Number(body.latitude);
       const lngNum = Number(body.longitude);
@@ -376,6 +394,8 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
         .andWhere("lng", lngNum)
         .first();
 
+      const geo = trx.raw("ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography", [lngNum, latNum]);
+
       if (existingAddress) {
         await trx("user_addresses")
           .where({ id: existingAddress.id })
@@ -383,10 +403,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
             city: body.map_label?.trim() || "UAE",
             area: String(body.area || "").trim(),
             address_line: addressLine,
-            geo: trx.raw(
-              "ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography",
-              [lngNum, latNum]
-            ),
+            geo,
           });
       } else {
         await trx("user_addresses").insert({
@@ -397,10 +414,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
           address_line: addressLine,
           lat: latNum,
           lng: lngNum,
-          geo: trx.raw(
-            "ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography",
-            [lngNum, latNum]
-          ),
+          geo,
           is_default: false,
           created_at: trx.fn.now(),
         });
@@ -410,7 +424,6 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     for (const r of saRows) {
       const qty = Number(itemsById.get(r.availability_id) || 1);
       const unit = Number(r.price_aed || 0);
-      const lineTotal = unit * qty;
       const duration = Number(r.duration_mins || 0);
 
       const [bi] = await trx("booking_items")
@@ -423,7 +436,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
           duration_min_snapshot: duration,
           duration_mins: duration,
           qty,
-          line_total_aed: lineTotal,
+          line_total_aed: unit * qty,
           created_at: trx.fn.now(),
         })
         .returning("*");
@@ -457,7 +470,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
   } catch (e) {
     try {
       await trx.rollback();
-    } catch { }
+    } catch {}
     next(e);
   }
 });

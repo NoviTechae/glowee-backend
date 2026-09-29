@@ -1,6 +1,7 @@
 // src/routes/publicBrowse.js
 const router = require("express").Router();
 const db = require("../db/knex");
+const { whereBranchCoversPoint } = require("../utils/homeCoverage");
 
 // GET /browse/branches?type=salon|home&lat=24.45&lng=54.37&city=...&area=...
 //
@@ -104,7 +105,32 @@ router.get("/branches", async (req, res, next) => {
       ]);
 
       if (hasPoint) {
-        q.whereRaw("ST_DWithin(b.geo, ?, b.home_radius_km * 1000)", [point]);
+        // The address the service is for (not necessarily where the customer is now).
+        whereBranchCoversPoint(q, db, lng, lat);
+
+        // The area rules that apply to this address, so the app can show days and minimums.
+        const p = "ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography";
+        q.select(
+          db.raw(
+            `(
+              SELECT json_agg(json_build_object(
+                'area', a.name_en,
+                'area_ar', a.name_ar,
+                'days', z.days,
+                'min_order_aed', z.min_order_aed,
+                'visit_fee_aed', z.visit_fee_aed
+              ))
+              FROM branch_home_zones z
+              JOIN service_areas a ON a.id = z.area_id
+              WHERE z.branch_id = b.id AND z.is_active AND a.is_active
+                AND CASE WHEN a.boundary IS NOT NULL
+                  THEN ST_Covers(a.boundary, ${p})
+                  ELSE ST_DWithin(a.center, ${p}, a.radius_km * 1000)
+                END
+            ) AS matched_zones`,
+            [lng, lat, lng, lat]
+          )
+        );
       }
     }
 
@@ -119,8 +145,9 @@ router.get("/branches", async (req, res, next) => {
     const rows = await q;
 
     res.json({
-      data: rows.map((r) => ({
+      data: rows.map(({ matched_zones, ...r }) => ({
         ...r,
+        ...summariseZones(matched_zones, r.home_min_order_aed),
         distance_km: r.distance_km == null ? null : Number(r.distance_km),
         home_radius_km: r.home_radius_km == null ? null : Number(r.home_radius_km),
         home_min_order_aed:
@@ -134,5 +161,28 @@ router.get("/branches", async (req, res, next) => {
     next(e);
   }
 });
+
+// Days and minimum order that apply to the chosen address.
+// service_days: null means every day (or no area rules for this address).
+function summariseZones(zones, branchMin) {
+  if (!zones || !zones.length) return { service_days: null, service_areas: [] };
+
+  const everyDay = zones.some((z) => !z.days);
+  const days = everyDay ? null : [...new Set(zones.flatMap((z) => z.days))].sort();
+
+  const mins = zones.map((z) => z.min_order_aed);
+  const fees = zones.map((z) => z.visit_fee_aed);
+
+  return {
+    service_days: days,
+    service_areas: [...new Set(zones.map((z) => z.area))],
+    home_min_order_aed: mins.every((m) => m != null)
+      ? Math.min(...mins.map(Number))
+      : branchMin == null
+      ? null
+      : Number(branchMin),
+    area_visit_fee_aed: fees.every((f) => f != null) ? Math.min(...fees.map(Number)) : null,
+  };
+}
 
 module.exports = router;
