@@ -4,7 +4,7 @@ const { z } = require("zod");
 const bcrypt = require("bcrypt");
 const db = require("../db/knex");
 const dashboardAuthRequired = require("../middleware/dashboardAuthRequired");
-
+const { syncSalonType } = require("../utils/salonType");
 
 function requireAdmin(req, res, next) {
   if (req.dashboard?.role !== "admin") return res.status(403).json({ error: "Admin only" });
@@ -30,6 +30,29 @@ function withSalonCounts(q) {
   );
 }
 
+function geoRaw(lng, lat) {
+  return db.raw(`ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography`, [lng, lat]);
+}
+
+const BRANCH_COLUMNS = [
+  "id",
+  "salon_id",
+  "name",
+  "country",
+  "city",
+  "area",
+  "address_line",
+  "lat",
+  "lng",
+  "offers_in_salon",
+  "supports_home_services",
+  "home_radius_km",
+  "home_min_order_aed",
+  "rating",
+  "reviews_count",
+  "is_active",
+];
+
 // GET /gift/themes - For mobile app
 router.get("/gift/themes", async (req, res) => {
   try {
@@ -53,13 +76,13 @@ router.use(dashboardAuthRequired);
 const SalonTypeSchema = z.preprocess((v) => {
   const s = String(v ?? "").trim().toLowerCase();
 
-  if (!s) return undefined;              // يخليها تروح للـ default
+  if (!s) return undefined;
   if (s === "home_service") return "home";
   if (s === "in-salon") return "in_salon";
   if (s === "insalon") return "in_salon";
   if (s === "homeservice") return "home";
 
-  return s; // لو كانت أصلاً home/both/in_salon
+  return s;
 }, z.enum(["in_salon", "home", "both"]));
 
 const CreateSalonSchema = z.object({
@@ -78,25 +101,26 @@ const CreateSalonSchema = z.object({
     email: z.string().email(),
     password: z.string().min(6),
   }),
-
-    home_branch: z
+  home_branch: z
     .object({
       city: z.string().min(2),
       area: z.string().min(2),
       address_line: z.string().nullable().optional(),
       lat: z.coerce.number(),
       lng: z.coerce.number(),
+      radius_km: z.coerce.number().positive().max(200).optional(),
+      min_order_aed: z.coerce.number().min(0).max(100000).nullable().optional(),
+      min_order_aed: z.coerce.number().positive().max(100000).nullable().optional(),
     })
     .nullable()
     .optional(),
-
 });
 
-// POST /dashboard/admin/salons  (ينشئ الصالون + حساب الصالون)
+// POST /dashboard/admin/salons  (creates the salon + its dashboard login)
 router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
     const { salon, account, home_branch } = CreateSalonSchema.parse(req.body);
-    
+
     const existing = await db("dashboard_accounts")
       .where({ email: account.email.toLowerCase() })
       .first("id");
@@ -139,7 +163,7 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
         })
         .returning(["id", "email", "role", "salon_id", "is_active"]);
 
-      // ✅ auto-create internal branch for home salons
+      // Home-only businesses get a private starting point that home visits are measured from.
       if (s.salon_type === "home") {
         const [branch] = await trx("branches")
           .insert({
@@ -152,22 +176,27 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
             lat: home_branch?.lat ?? 0,
             lng: home_branch?.lng ?? 0,
             geo: geoRaw(home_branch?.lng ?? 0, home_branch?.lat ?? 0),
+            offers_in_salon: false,
             supports_home_services: true,
+            home_radius_km: home_branch?.radius_km ?? 25,
+            home_min_order_aed: home_branch?.min_order_aed ?? null,
+            home_min_order_aed: home_branch?.min_order_aed ?? null,
             is_active: true,
             created_at: trx.fn.now(),
             updated_at: trx.fn.now(),
           })
           .returning(["id", "name", "salon_id"]);
 
-        await trx("branch_hours").insert([
-          { branch_id: branch.id, day_of_week: 0, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
-          { branch_id: branch.id, day_of_week: 1, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
-          { branch_id: branch.id, day_of_week: 2, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
-          { branch_id: branch.id, day_of_week: 3, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
-          { branch_id: branch.id, day_of_week: 4, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
-          { branch_id: branch.id, day_of_week: 5, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
-          { branch_id: branch.id, day_of_week: 6, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: trx.fn.now() },
-        ]);
+        await trx("branch_hours").insert(
+          [0, 1, 2, 3, 4, 5, 6].map((day) => ({
+            branch_id: branch.id,
+            day_of_week: day,
+            is_closed: false,
+            open_time: "10:00",
+            close_time: "22:00",
+            updated_at: trx.fn.now(),
+          }))
+        );
       }
 
       return { salon: s, account: acc };
@@ -183,29 +212,29 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
 router.get("/salons", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
     const type = (req.query.type || "").toString();
- 
+
     let q = withSalonCounts(db("salons as s")).orderBy("s.created_at", "desc");
- 
+
     if (type === "in_salon") q = q.where("s.salon_type", "in_salon");
     if (type === "home") q = q.where("s.salon_type", "home");
     if (type === "both") q = q.where("s.salon_type", "both");
     if (type === "salons_only") q = q.whereIn("s.salon_type", ["in_salon", "both"]);
     if (type === "home_only") q = q.where("s.salon_type", "home");
- 
+
     const rows = await q;
     res.json({ data: rows });
   } catch (e) {
     next(e);
   }
 });
- 
+
 // GET /dashboard/admin/salons/:id
 router.get("/salons/:id", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
     const salon = await withSalonCounts(db("salons as s"))
       .where("s.id", req.params.id)
       .first();
- 
+
     if (!salon) return res.status(404).json({ error: "Salon not found" });
     res.json({ salon });
   } catch (e) {
@@ -214,9 +243,9 @@ router.get("/salons/:id", dashboardAuthRequired, requireAdmin, async (req, res, 
 });
 
 // PUT /dashboard/admin/salons/:id  (Update)
+// salon_type is no longer edited here: it follows the salon's branches.
 const UpdateSalonSchema = z.object({
   name: z.string().min(2).optional(),
-  salon_type: SalonTypeSchema.optional(),
   about: z.string().nullable().optional(),
   logo_url: z.string().url().nullable().optional(),
   cover_url: z.string().url().nullable().optional(),
@@ -251,17 +280,17 @@ router.delete("/salons/:id", dashboardAuthRequired, requireAdmin, async (req, re
     const salon = await db("salons").where({ id }).first("id");
     if (!salon) return res.status(404).json({ error: "Salon not found" });
 
+    const hasBookings = await db("bookings").where({ salon_id: id }).first("id");
+    if (hasBookings) {
+      return res.status(409).json({
+        error: "This salon has bookings, so it can't be deleted. Deactivate it instead.",
+      });
+    }
+
     await db.transaction(async (trx) => {
-      // 1) delete dependent rows first
       await trx("branches").where({ salon_id: id }).del();
-
-      // 2) services (you have services in salonController)
       await trx("services").where({ salon_id: id }).del();
-
-      // 3) dashboard accounts related to this salon
       await trx("dashboard_accounts").where({ salon_id: id }).del();
-
-      // 4) finally delete salon
       await trx("salons").where({ id }).del();
     });
 
@@ -275,11 +304,7 @@ router.delete("/salons/:id", dashboardAuthRequired, requireAdmin, async (req, re
 // Admin: Branches
 // ---------------------------
 
-function geoRaw(lng, lat) {
-  return db.raw(`ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography`, [lng, lat]);
-}
-
-const AdminCreateBranchSchema = z.object({
+const BranchFields = z.object({
   name: z.string().min(2),
   country: z.string().min(2).default("United Arab Emirates"),
   city: z.string().min(2),
@@ -288,19 +313,27 @@ const AdminCreateBranchSchema = z.object({
   lat: z.coerce.number(),
   lng: z.coerce.number(),
 
+  offers_in_salon: z.coerce.boolean().optional().default(true),
   supports_home_services: z.coerce.boolean().optional().default(false),
+  home_radius_km: z.coerce.number().positive().max(200).nullable().optional(),
+  home_min_order_aed: z.coerce.number().positive().max(100000).nullable().optional(),
   is_active: z.coerce.boolean().optional().default(true),
 });
 
-const AdminUpdateBranchSchema = AdminCreateBranchSchema.partial();
+const OFFERS_SOMETHING = "A location must offer in-salon visits, home service, or both.";
+
+const AdminCreateBranchSchema = BranchFields.refine(
+  (b) => b.offers_in_salon || b.supports_home_services,
+  { message: OFFERS_SOMETHING }
+);
+
+const AdminUpdateBranchSchema = BranchFields.partial();
 
 // GET /dashboard/admin/salons/:salonId/branches
 router.get("/salons/:salonId/branches", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
-    const salonId = req.params.salonId;
-
     const rows = await db("branches")
-      .where({ salon_id: salonId })
+      .where({ salon_id: req.params.salonId })
       .orderBy("created_at", "desc");
 
     res.json({ data: rows });
@@ -315,63 +348,46 @@ router.post("/salons/:salonId/branches", dashboardAuthRequired, requireAdmin, as
     const salonId = req.params.salonId;
     const body = AdminCreateBranchSchema.parse(req.body);
 
-    const s = await db("salons").where({ id: salonId }).first("id", "salon_type");
+    const s = await db("salons").where({ id: salonId }).first("id");
     if (!s) return res.status(404).json({ error: "Salon not found" });
 
-    if (s.salon_type === "home") {
-      const existingCount = await db("branches")
-        .where({ salon_id: salonId })
-        .count("* as c")
-        .first();
+    const b = await db.transaction(async (trx) => {
+      const [branch] = await trx("branches")
+        .insert({
+          salon_id: salonId,
+          name: body.name,
+          country: body.country,
+          city: body.city,
+          area: body.area,
+          address_line: body.address_line ?? null,
+          lat: body.lat,
+          lng: body.lng,
+          geo: geoRaw(body.lng, body.lat),
+          offers_in_salon: body.offers_in_salon,
+          supports_home_services: body.supports_home_services,
+          home_radius_km: body.supports_home_services ? body.home_radius_km ?? 15 : null,
+          home_min_order_aed: body.supports_home_services ? body.home_min_order_aed ?? null : null,
+          is_active: body.is_active,
+          created_at: trx.fn.now(),
+          updated_at: trx.fn.now(),
+        })
+        .returning(BRANCH_COLUMNS);
 
-      if (Number(existingCount?.c || 0) >= 1) {
-        return res.status(400).json({
-          error: "Home salons can only have one internal home-service branch",
-        });
-      }
-    }
-    const [b] = await db("branches")
-      .insert({
-        salon_id: salonId,
-        name: body.name,
-        country: body.country,
-        city: body.city,
-        area: body.area,
-        address_line: body.address_line ?? null,
-        lat: body.lat,
-        lng: body.lng,
-        geo: geoRaw(body.lng, body.lat),
-        supports_home_services: body.supports_home_services,
-        is_active: body.is_active,
-        created_at: db.fn.now(),
-        updated_at: db.fn.now(),
-      })
-      .returning([
-        "id",
-        "salon_id",
-        "name",
-        "country",
-        "city",
-        "area",
-        "address_line",
-        "lat",
-        "lng",
-        "supports_home_services",
-        "rating",
-        "reviews_count",
-        "is_active",
-      ]);
+      // Default hours: Sunday closed, Monday to Saturday 10:00 to 22:00. The salon can change them.
+      await trx("branch_hours").insert(
+        [0, 1, 2, 3, 4, 5, 6].map((day) => ({
+          branch_id: branch.id,
+          day_of_week: day,
+          is_closed: day === 0,
+          open_time: day === 0 ? null : "10:00",
+          close_time: day === 0 ? null : "22:00",
+          updated_at: trx.fn.now(),
+        }))
+      );
 
-    // Default hours (Mon-Sat 10:00-22:00, Sun closed) - اختياري
-    await db("branch_hours").insert([
-      { branch_id: b.id, day_of_week: 0, is_closed: true, open_time: null, close_time: null, updated_at: db.fn.now() },
-      { branch_id: b.id, day_of_week: 1, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: db.fn.now() },
-      { branch_id: b.id, day_of_week: 2, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: db.fn.now() },
-      { branch_id: b.id, day_of_week: 3, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: db.fn.now() },
-      { branch_id: b.id, day_of_week: 4, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: db.fn.now() },
-      { branch_id: b.id, day_of_week: 5, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: db.fn.now() },
-      { branch_id: b.id, day_of_week: 6, is_closed: false, open_time: "10:00", close_time: "22:00", updated_at: db.fn.now() },
-    ]);
+      await syncSalonType(salonId, trx);
+      return branch;
+    });
 
     res.json({ branch: b });
   } catch (e) {
@@ -385,8 +401,17 @@ router.put("/branches/:branchId", dashboardAuthRequired, requireAdmin, async (re
     const branchId = req.params.branchId;
     const patch = AdminUpdateBranchSchema.parse(req.body);
 
-    const exists = await db("branches").where({ id: branchId }).first("id");
-    if (!exists) return res.status(404).json({ error: "Branch not found" });
+    const current = await db("branches")
+      .where({ id: branchId })
+      .first("id", "salon_id", "offers_in_salon", "supports_home_services", "home_radius_km");
+    if (!current) return res.status(404).json({ error: "Branch not found" });
+
+    const next_offers_in_salon = patch.offers_in_salon ?? current.offers_in_salon;
+    const next_home = patch.supports_home_services ?? current.supports_home_services;
+
+    if (!next_offers_in_salon && !next_home) {
+      return res.status(400).json({ error: OFFERS_SOMETHING });
+    }
 
     const update = { ...patch, updated_at: db.fn.now() };
 
@@ -394,24 +419,22 @@ router.put("/branches/:branchId", dashboardAuthRequired, requireAdmin, async (re
       update.geo = geoRaw(patch.lng, patch.lat);
     }
 
-    const [updated] = await db("branches")
-      .where({ id: branchId })
-      .update(update)
-      .returning([
-        "id",
-        "salon_id",
-        "name",
-        "country",
-        "city",
-        "area",
-        "address_line",
-        "lat",
-        "lng",
-        "supports_home_services",
-        "rating",
-        "reviews_count",
-        "is_active",
-      ]);
+    if (!next_home) {
+      update.home_radius_km = null;
+      update.home_min_order_aed = null;
+    } else if (update.home_radius_km == null && current.home_radius_km == null) {
+      update.home_radius_km = 15;
+    }
+
+    const updated = await db.transaction(async (trx) => {
+      const [row] = await trx("branches")
+        .where({ id: branchId })
+        .update(update)
+        .returning(BRANCH_COLUMNS);
+
+      await syncSalonType(current.salon_id, trx);
+      return row;
+    });
 
     res.json({ branch: updated });
   } catch (e) {
@@ -424,10 +447,14 @@ router.delete("/branches/:branchId", dashboardAuthRequired, requireAdmin, async 
   try {
     const branchId = req.params.branchId;
 
-    const exists = await db("branches").where({ id: branchId }).first("id");
-    if (!exists) return res.status(404).json({ error: "Branch not found" });
+    const current = await db("branches").where({ id: branchId }).first("id", "salon_id");
+    if (!current) return res.status(404).json({ error: "Branch not found" });
 
-    await db("branches").where({ id: branchId }).del();
+    await db.transaction(async (trx) => {
+      await trx("branches").where({ id: branchId }).del();
+      await syncSalonType(current.salon_id, trx);
+    });
+
     res.json({ ok: true, deleted_branch_id: branchId });
   } catch (e) {
     next(e);
@@ -437,9 +464,7 @@ router.delete("/branches/:branchId", dashboardAuthRequired, requireAdmin, async 
 // GET /dashboard/admin/branches/:branchId
 router.get("/branches/:branchId", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
-    const branchId = req.params.branchId;
-
-    const branch = await db("branches").where({ id: branchId }).first();
+    const branch = await db("branches").where({ id: req.params.branchId }).first();
     if (!branch) return res.status(404).json({ error: "Branch not found" });
 
     res.json({ branch });
@@ -448,16 +473,14 @@ router.get("/branches/:branchId", dashboardAuthRequired, requireAdmin, async (re
   }
 });
 
-// Enhanced stats endpoint (replace existing one)
+// GET /dashboard/admin/stats
 router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
-    // Salon stats
     const [{ total_salons }] = await db("salons").count("* as total_salons");
     const [{ active_salons }] = await db("salons")
       .where({ is_active: true })
       .count("* as active_salons");
 
-    // Salon types
     const [{ in_salon_salons }] = await db("salons")
       .where({ is_active: true, salon_type: "in_salon" })
       .count("* as in_salon_salons");
@@ -470,7 +493,6 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
       .where({ is_active: true, salon_type: "both" })
       .count("* as both_salons");
 
-    // User stats (optional - if you have users table)
     let userStats = null;
     try {
       const [{ total_users }] = await db("users").count("* as total_users");
@@ -478,31 +500,27 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
         .where({ is_active: true })
         .count("* as active_users");
 
-      userStats = {
-        total: Number(total_users),
-        active: Number(active_users),
-      };
+      userStats = { total: Number(total_users), active: Number(active_users) };
     } catch (e) {
-      // Users table might not exist yet
+      // users table might not exist
     }
 
-    // Booking stats (optional - if you have bookings table)
     let bookingStats = null;
     try {
       const [{ total_bookings }] = await db("bookings").count("* as total_bookings");
 
       const [{ today_bookings }] = await db("bookings")
         .whereRaw(`
-    (scheduled_at AT TIME ZONE 'Asia/Dubai')::date =
-    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')::date
-  `)
+          (scheduled_at AT TIME ZONE 'Asia/Dubai')::date =
+          (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')::date
+        `)
         .count("* as today_bookings");
 
       const [{ month_bookings }] = await db("bookings")
         .whereRaw(`
-    DATE_TRUNC('month', scheduled_at AT TIME ZONE 'Asia/Dubai') =
-    DATE_TRUNC('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')
-  `)
+          DATE_TRUNC('month', scheduled_at AT TIME ZONE 'Asia/Dubai') =
+          DATE_TRUNC('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')
+        `)
         .count("* as month_bookings");
 
       bookingStats = {
@@ -511,14 +529,11 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
         thisMonth: Number(month_bookings),
       };
     } catch (e) {
-      // Bookings table might not exist yet
+      // bookings table might not exist
     }
 
     res.json({
-      salons: {
-        total: Number(total_salons),
-        active: Number(active_salons),
-      },
+      salons: { total: Number(total_salons), active: Number(active_salons) },
       types: {
         in_salon: Number(in_salon_salons),
         home: Number(home_salons),

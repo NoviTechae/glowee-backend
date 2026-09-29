@@ -126,6 +126,48 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       return res.status(400).json({ error: "Invalid start_iso" });
     }
 
+    const branchRow = await trx("branches")
+      .where({ id: branchId, salon_id: salonId, is_active: true })
+      .first([
+        "id",
+        "offers_in_salon",
+        "supports_home_services",
+        "home_radius_km",
+        "home_min_order_aed",
+      ]);
+
+    if (!branchRow) {
+      await trx.rollback();
+      return res.status(404).json({ error: "Branch not found" });
+    }
+
+    if (body.mode === "in_salon" && !branchRow.offers_in_salon) {
+      await trx.rollback();
+      return res.status(400).json({ error: "This business only offers home service." });
+    }
+
+    if (body.mode === "home") {
+      if (!branchRow.supports_home_services) {
+        await trx.rollback();
+        return res.status(400).json({ error: "This branch doesn't offer home service." });
+      }
+
+      const covered = await trx("branches")
+        .where({ id: branchId })
+        .whereRaw(
+          "ST_DWithin(geo, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, home_radius_km * 1000)",
+          [body.longitude, body.latitude]
+        )
+        .first("id");
+
+      if (!covered) {
+        await trx.rollback();
+        return res.status(400).json({
+          error: "This address is outside the area this salon covers for home service.",
+        });
+      }
+    }
+
     const dow = start.getDay();
     const hourRow = await trx("branch_hours")
       .where({ branch_id: branchId, day_of_week: dow })
@@ -180,10 +222,25 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       subtotal += unit * qty;
 
       if (body.mode === "home") {
-        const travel = Number(r.travel_fee_aed || 0);
-        fees += travel * qty;
+        // One trip per booking: charge the highest travel fee once.
+        fees = Math.max(fees, Number(r.travel_fee_aed || 0));
       }
     }
+
+    const minOrder = Number(branchRow.home_min_order_aed || 0);
+
+    if (body.mode === "home" && minOrder > 0 && subtotal < minOrder) {
+      await trx.rollback();
+      return res.status(400).json({
+        error: `Home service at this salon starts from AED ${minOrder.toFixed(
+          2
+        )}. Add AED ${(minOrder - subtotal).toFixed(2)} more to book.`,
+        code: "BELOW_HOME_MIN_ORDER",
+        min_order_aed: minOrder,
+        subtotal_aed: subtotal,
+      });
+    }
+
 
     const end = new Date(start.getTime() + totalDuration * 60 * 1000);
 
