@@ -453,11 +453,17 @@ router.get("/stats", dashboardAuthRequired, requireAdmin, async (req, res, next)
       const [{ total_bookings }] = await db("bookings").count("* as total_bookings");
 
       const [{ today_bookings }] = await db("bookings")
-        .whereRaw("DATE(created_at) = CURRENT_DATE")
+        .whereRaw(`
+    (scheduled_at AT TIME ZONE 'Asia/Dubai')::date =
+    (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')::date
+  `)
         .count("* as today_bookings");
 
       const [{ month_bookings }] = await db("bookings")
-        .whereRaw("DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)")
+        .whereRaw(`
+    DATE_TRUNC('month', scheduled_at AT TIME ZONE 'Asia/Dubai') =
+    DATE_TRUNC('month', CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Dubai')
+  `)
         .count("* as month_bookings");
 
       bookingStats = {
@@ -495,5 +501,6 @@ router.use("/users", require("./adminUsers"));
 router.use("/gift-themes", require("./adminGiftThemes"));
 router.use("/mobile-banners", require("./adminMobileBanners"));
 router.use("/feedback", require("./adminFeedback"));
+router.use("/partner-requests", require("./adminPartnerRequests"));
 
 module.exports = router;
