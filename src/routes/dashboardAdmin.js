@@ -11,6 +11,25 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// Counts used by the dashboard to show whether a salon is ready for customers.
+function withSalonCounts(q) {
+  return q.select(
+    "s.*",
+    db.raw(
+      `(SELECT COUNT(*) FROM branches b WHERE b.salon_id = s.id AND b.is_active = true)::int AS active_branches`
+    ),
+    db.raw(
+      `(SELECT COUNT(*) FROM services sv WHERE sv.salon_id = s.id AND sv.is_active = true)::int AS active_services`
+    ),
+    db.raw(
+      `(SELECT COUNT(*) FROM bookings bk WHERE bk.salon_id = s.id AND bk.status IN ('confirmed', 'completed'))::int AS bookings_count`
+    ),
+    db.raw(
+      `(SELECT da.email FROM dashboard_accounts da WHERE da.salon_id = s.id AND da.role = 'salon' ORDER BY da.created_at LIMIT 1) AS account_email`
+    )
+  );
+}
+
 // GET /gift/themes - For mobile app
 router.get("/gift/themes", async (req, res) => {
   try {
@@ -59,13 +78,25 @@ const CreateSalonSchema = z.object({
     email: z.string().email(),
     password: z.string().min(6),
   }),
+
+    home_branch: z
+    .object({
+      city: z.string().min(2),
+      area: z.string().min(2),
+      address_line: z.string().nullable().optional(),
+      lat: z.coerce.number(),
+      lng: z.coerce.number(),
+    })
+    .nullable()
+    .optional(),
+
 });
 
 // POST /dashboard/admin/salons  (ينشئ الصالون + حساب الصالون)
 router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
-    const { salon, account } = CreateSalonSchema.parse(req.body);
-
+    const { salon, account, home_branch } = CreateSalonSchema.parse(req.body);
+    
     const existing = await db("dashboard_accounts")
       .where({ email: account.email.toLowerCase() })
       .first("id");
@@ -115,12 +146,12 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
             salon_id: s.id,
             name: "Home Service",
             country: "United Arab Emirates",
-            city: "UAE",
-            area: "Home Service",
-            address_line: null,
-            lat: 0,
-            lng: 0,
-            geo: geoRaw(0, 0),
+            city: home_branch?.city ?? "UAE",
+            area: home_branch?.area ?? "Home Service",
+            address_line: home_branch?.address_line ?? null,
+            lat: home_branch?.lat ?? 0,
+            lng: home_branch?.lng ?? 0,
+            geo: geoRaw(home_branch?.lng ?? 0, home_branch?.lat ?? 0),
             supports_home_services: true,
             is_active: true,
             created_at: trx.fn.now(),
@@ -151,32 +182,30 @@ router.post("/salons", dashboardAuthRequired, requireAdmin, async (req, res, nex
 // GET /dashboard/admin/salons  (List)
 router.get("/salons", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
-    const type = (req.query.type || "").toString(); // in_salon | home | both
-
-    let q = db("salons").orderBy("created_at", "desc");
-
-    if (type === "in_salon") q = q.where("salon_type", "in_salon");
-    if (type === "home") q = q.where("salon_type", "home");
-    if (type === "both") q = q.where("salon_type", "both");
-
-    // لو تبين صفحة Salons تعرض in_salon + both
-    if (type === "salons_only") q = q.whereIn("salon_type", ["in_salon", "both"]);
-
-    // لو تبين صفحة Home Service تعرض home فقط (مثل طلبك)
-    if (type === "home_only") q = q.where("salon_type", "home");
-
+    const type = (req.query.type || "").toString();
+ 
+    let q = withSalonCounts(db("salons as s")).orderBy("s.created_at", "desc");
+ 
+    if (type === "in_salon") q = q.where("s.salon_type", "in_salon");
+    if (type === "home") q = q.where("s.salon_type", "home");
+    if (type === "both") q = q.where("s.salon_type", "both");
+    if (type === "salons_only") q = q.whereIn("s.salon_type", ["in_salon", "both"]);
+    if (type === "home_only") q = q.where("s.salon_type", "home");
+ 
     const rows = await q;
     res.json({ data: rows });
   } catch (e) {
     next(e);
   }
 });
-
-// --- Admin: Get salon by id ---
+ 
+// GET /dashboard/admin/salons/:id
 router.get("/salons/:id", dashboardAuthRequired, requireAdmin, async (req, res, next) => {
   try {
-    const id = req.params.id;
-    const salon = await db("salons").where({ id }).first();
+    const salon = await withSalonCounts(db("salons as s"))
+      .where("s.id", req.params.id)
+      .first();
+ 
     if (!salon) return res.status(404).json({ error: "Salon not found" });
     res.json({ salon });
   } catch (e) {
