@@ -58,7 +58,6 @@ router.get("/branches", async (req, res, next) => {
         "b.offers_in_salon",
         "b.home_radius_km",
         "b.home_min_order_aed",
-        "b.home_min_order_aed",
 
         db.raw(`COALESCE(AVG(r.rating), 0)::decimal(3,2) as rating`),
         db.raw(`COUNT(r.id)::int as reviews_count`),
@@ -86,7 +85,7 @@ router.get("/branches", async (req, res, next) => {
           END as is_open_now
         `),
       ])
-      .groupBy("b.id", "s.id", "bh.branch_id");
+      .groupBy("b.id", "s.id", "bh.id");
 
     if (type === "salon") {
       q.andWhere("b.offers_in_salon", true).select([
@@ -147,16 +146,15 @@ router.get("/branches", async (req, res, next) => {
     res.json({
       data: rows.map(({ matched_zones, ...r }) => ({
         ...r,
+        home_min_order_aed:
+          r.home_min_order_aed == null ? null : Number(r.home_min_order_aed),
         ...summariseZones(matched_zones, r.home_min_order_aed),
         distance_km: r.distance_km == null ? null : Number(r.distance_km),
         home_radius_km: r.home_radius_km == null ? null : Number(r.home_radius_km),
-        home_min_order_aed:
-          r.home_min_order_aed == null ? null : Number(r.home_min_order_aed),
-        home_min_order_aed:
-          r.home_min_order_aed == null ? null : Number(r.home_min_order_aed),
       })),
       meta: { type, coverage_checked: type === "home" && hasPoint },
     });
+
   } catch (e) {
     next(e);
   }
