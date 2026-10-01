@@ -164,8 +164,8 @@ async function rewardDiscountForBooking(reward, booking, trx = db) {
     if (!terms.service_id) return { eligible: false, discount_aed: 0, reason: "This reward is no longer offered by the salon." };
     const item = await trx("booking_items")
       .where({ booking_id: booking.id, service_id: terms.service_id })
-      .orderBy("unit_price_aed", "desc")
-      .first("unit_price_aed", "line_total_aed");
+      .orderBy("price_aed_snapshot", "desc")
+      .first(trx.raw("COALESCE(NULLIF(unit_price_aed, 0), price_aed_snapshot) AS unit_price_aed"), "line_total_aed");
     if (!item) return { eligible: false, discount_aed: 0, reason: "Add this service to your booking to use the reward.", service_id: terms.service_id };
     // One of that service is free.
     const value = round2(Math.min(Number(item.unit_price_aed), Number(item.line_total_aed)));
