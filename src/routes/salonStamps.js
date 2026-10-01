@@ -50,7 +50,7 @@ router.get("/", async (req, res, next) => {
         .where("r.salon_id", salonId)
         .where("r.expires_at", ">", db.fn.now())
         .where(function () {
-          this.whereNull("r.booking_id").orWhereNotIn("b.status", HOLDING_STATUSES);
+          this.whereNull("r.booking_id").orWhereRaw("b.status::text <> ALL(?)", [HOLDING_STATUSES]);
         })
         .count("* as c")
         .first(),

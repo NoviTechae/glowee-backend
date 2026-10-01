@@ -110,7 +110,7 @@ async function listUsableRewards(userId, salonId, { bookingId = null, trx = db }
     .where({ "r.user_id": userId, "r.salon_id": salonId })
     .where(function () {
       this.whereNull("r.booking_id")
-        .orWhereNotIn("b.status", HOLDING_STATUSES)
+        .orWhereRaw("b.status::text <> ALL(?)", [HOLDING_STATUSES])
         .modify((q) => {
           if (bookingId) q.orWhere("r.booking_id", bookingId);
         });
@@ -132,7 +132,7 @@ async function listUsableRewardsForUser(userId, trx = db) {
     .where("r.user_id", userId)
     .where("r.expires_at", ">", trx.fn.now())
     .where(function () {
-      this.whereNull("r.booking_id").orWhereNotIn("b.status", HOLDING_STATUSES);
+      this.whereNull("r.booking_id").orWhereRaw("b.status::text <> ALL(?)", [HOLDING_STATUSES]);
     })
     .orderBy("r.expires_at", "asc")
     .select(["r.id", "r.salon_id", "r.label", "r.kind", "r.service_id", "r.percent", "r.expires_at"]);
