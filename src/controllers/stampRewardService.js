@@ -1,4 +1,4 @@
-// src/services/stampRewardService.js
+// src/controllers/stampRewardService.js
 const db = require("../db/knex");
 
 async function getStampRewardForSalon(userId, salonId, trx = db) {

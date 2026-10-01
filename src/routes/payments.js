@@ -2,52 +2,48 @@
 const router = require("express").Router();
 const { z } = require("zod");
 const authRequired = require("../middleware/authRequired");
-const tapService = require("../services/tap");
 const ziinaService = require("../services/ziina");
 const db = require("../db/knex");
 
+const { isZiinaPaid } = ziinaService;
+
+// ---------- Small HTML pages shown in the payment browser ----------
+const esc = (v) =>
+  String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function page(title, lines) {
+  return `<!doctype html><html><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/><title>${esc(title)}</title>
+<style>body{font-family:-apple-system,Arial,sans-serif;background:#f8f5f2;color:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;text-align:center}
+.box{max-width:420px;background:#fff;border-radius:16px;padding:24px;box-shadow:0 8px 30px rgba(0,0,0,.08)}h1{margin:0 0 12px;font-size:24px}p{margin:0 0 8px;color:#555}</style>
+</head><body><div class="box"><h1>${esc(title)}</h1>${lines.map((l) => `<p>${esc(l)}</p>`).join("")}</div></body></html>`;
+}
+
+const bookingUnavailablePage = (amount) =>
+  page("This time is no longer available", [
+    `Your payment of AED ${Number(amount).toFixed(2)} was added to your Glowee wallet. You can use it to book another time.`,
+  ]);
+
+// Tap routes (cards, webhook, charge verify, Apple Pay) were removed while Tap
+// is not in use. An unused public webhook is still a way in. Restore from git
+// if Tap is switched on again, and verify every webhook with Tap before crediting.
+
+// ---------- Wallet top-up ----------
 const WalletTopupSchema = z.object({
   amount_aed: z.number().min(5).max(10000),
-  provider: z.enum(["tap", "ziina"]).optional().default("ziina"),
+  // Tap is switched off; Ziina is the only provider.
+  provider: z.literal("ziina").optional().default("ziina"),
 });
 
 router.post("/wallet/topup", authRequired, async (req, res, next) => {
   try {
     const { amount_aed, provider } = WalletTopupSchema.parse(req.body);
-    const userId = req.user.sub;
+    const user = await db("users").where({ id: req.user.sub }).first();
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-    const user = await db("users").where({ id: userId }).first();
+    const result = await ziinaService.createWalletTopupPaymentIntent(user.id, amount_aed, user.phone, user.name, user.email);
 
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    let result;
-
-    if (provider === "ziina") {
-      result = await ziinaService.createWalletTopupPaymentIntent(
-        userId,
-        amount_aed,
-        user.phone,
-        user.name,
-        user.email
-      );
-    } else {
-      result = await tapService.createWalletTopupCharge(
-        userId,
-        amount_aed,
-        user.phone,
-        user.name,
-        user.email
-      );
-    }
-
-    if (!result.ok) {
-      return res.status(400).json({
-        error: result.error,
-        code: result.code,
-      });
-    }
+    if (!result.ok) return res.status(400).json({ error: result.error, code: result.code });
 
     return res.json({
       ok: true,
@@ -64,52 +60,24 @@ router.post("/wallet/topup", authRequired, async (req, res, next) => {
   }
 });
 
-router.get("/cards", authRequired, async (req, res, next) => {
-  try {
-    const result = await tapService.listSavedCards(req.user.sub);
-
-    if (!result.ok) {
-      return res.status(400).json({ error: result.error });
-    }
-
-    return res.json({
-      ok: true,
-      cards: result.cards,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
 router.get("/transaction/:id", authRequired, async (req, res, next) => {
   try {
-    const { id } = req.params;
-
-    const transaction = await db("payment_transactions")
-      .where({ id, user_id: req.user.sub })
-      .first();
-
-    if (!transaction) {
-      return res.status(404).json({ error: "Transaction not found" });
-    }
+    const t = await db("payment_transactions").where({ id: req.params.id, user_id: req.user.sub }).first();
+    if (!t) return res.status(404).json({ error: "Transaction not found" });
 
     return res.json({
       ok: true,
       transaction: {
-        id: transaction.id,
-        provider: transaction.provider,
-        type: transaction.type,
-        status: transaction.status,
-        amount_aed: Number(transaction.amount_aed),
-        created_at: transaction.created_at,
-        succeeded_at: transaction.succeeded_at,
-        failed_at: transaction.failed_at,
-        payment_method: {
-          type: transaction.payment_method_type,
-          card_last4: transaction.card_last4,
-          card_brand: transaction.card_brand,
-        },
-        error: transaction.error_message,
+        id: t.id,
+        provider: t.provider,
+        type: t.type,
+        status: t.status,
+        amount_aed: Number(t.amount_aed),
+        created_at: t.created_at,
+        succeeded_at: t.succeeded_at,
+        failed_at: t.failed_at,
+        payment_method: { type: t.payment_method_type, card_last4: t.card_last4, card_brand: t.card_brand },
+        error: t.error_message,
       },
     });
   } catch (error) {
@@ -119,911 +87,354 @@ router.get("/transaction/:id", authRequired, async (req, res, next) => {
 
 router.get("/history", authRequired, async (req, res, next) => {
   try {
-    const limit = Math.min(50, Number(req.query.limit || 20));
-    const offset = Number(req.query.offset || 0);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
 
-    const transactions = await db("payment_transactions")
-      .where({ user_id: req.user.sub })
-      .orderBy("created_at", "desc")
-      .limit(limit)
-      .offset(offset)
-      .select([
-        "id",
-        "provider",
-        "type",
-        "status",
-        "amount_aed",
-        "payment_method_type",
-        "card_last4",
-        "card_brand",
-        "created_at",
-        "succeeded_at",
-      ]);
-
-    const total = await db("payment_transactions")
-      .where({ user_id: req.user.sub })
-      .count("* as count")
-      .first();
+    const [rows, total] = await Promise.all([
+      db("payment_transactions")
+        .where({ user_id: req.user.sub })
+        .orderBy("created_at", "desc")
+        .limit(limit)
+        .offset(offset)
+        .select(["id", "provider", "type", "status", "amount_aed", "payment_method_type", "card_last4", "card_brand", "created_at", "succeeded_at"]),
+      db("payment_transactions").where({ user_id: req.user.sub }).count("* as count").first(),
+    ]);
 
     return res.json({
       ok: true,
-      data: transactions.map((t) => ({
+      data: rows.map((t) => ({
         id: t.id,
         provider: t.provider,
         type: t.type,
         status: t.status,
         amount_aed: Number(t.amount_aed),
-        payment_method: {
-          type: t.payment_method_type,
-          card_last4: t.card_last4,
-          card_brand: t.card_brand,
-        },
+        payment_method: { type: t.payment_method_type, card_last4: t.card_last4, card_brand: t.card_brand },
         created_at: t.created_at,
         succeeded_at: t.succeeded_at,
       })),
-      pagination: {
-        limit,
-        offset,
-        total: Number(total.count),
-      },
+      pagination: { limit, offset, total: Number(total.count) },
     });
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/webhooks/tap", async (req, res) => {
-  try {
-    const { id, status } = req.body;
-
-    console.log("Tap webhook received:", { id, status });
-
-    if (!id || !status) {
-      console.error("Invalid Tap webhook payload");
-      return res.status(400).json({ error: "Invalid payload" });
-    }
-
-    if (status === "CAPTURED" || status === "AUTHORIZED") {
-      const result = await tapService.handlePaymentSuccess(id, req.body);
-
-      if (!result.ok && !result.already_processed) {
-        console.error("Tap webhook handler error:", result.error);
-        return res.status(500).json({ error: result.error });
-      }
-    } else if (
-      status === "FAILED" ||
-      status === "CANCELLED" ||
-      status === "DECLINED"
-    ) {
-      const errorMsg = req.body.response?.message || "Payment failed";
-      const errorCode = req.body.response?.code || "unknown";
-
-      await tapService.handlePaymentFailed(id, errorMsg, errorCode);
-    }
-
-    res.json({ received: true });
-  } catch (error) {
-    console.error("Tap webhook handling error:", error);
-    res.status(500).json({ error: "Webhook handler failed" });
-  }
-});
-
+// ---------- Ziina: called by the app after the payment sheet closes ----------
 router.get("/verify/ziina/:paymentIntentId", authRequired, async (req, res, next) => {
   try {
     const { paymentIntentId } = req.params;
 
     const transaction = await db("payment_transactions")
-      .where({
-        provider_payment_id: paymentIntentId,
-        provider: "ziina",
-        user_id: req.user.sub,
-      })
+      .where({ provider_payment_id: paymentIntentId, provider: "ziina", user_id: req.user.sub })
       .first();
+    if (!transaction) return res.status(404).json({ error: "Transaction not found" });
 
-    if (!transaction) {
-      return res.status(404).json({ error: "Transaction not found" });
-    }
-
-    if (transaction.status === "succeeded") {
-      return res.json({
-        ok: true,
-        status: "succeeded",
-        amount: Number(transaction.amount_aed),
-      });
-    }
+    const finished = await finishedResponse(transaction);
+    if (finished) return res.json(finished);
 
     const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
+    if (!result.ok) return res.status(400).json({ error: result.error });
 
-    if (!result.ok) {
-      return res.status(400).json({ error: result.error });
+    if (!isZiinaPaid(result.status)) {
+      return res.json({ ok: true, status: result.status, amount: result.amount });
     }
 
-    const successStatuses = ["completed"];
+    const r = await ziinaService.handlePaymentIntentSuccess(paymentIntentId, result.raw);
+    if (!r.ok && !r.already_processed) return res.status(500).json({ error: r.error });
 
-    if (successStatuses.includes(String(result.status).toLowerCase())) {
-      const successResult = await ziinaService.handlePaymentIntentSuccess(
-        paymentIntentId,
-        result.raw
-      );
-
-      if (!successResult.ok && !successResult.already_processed) {
-        return res.status(500).json({ error: successResult.error });
-      }
-
-      if (successResult.booking_unavailable) {
-        return res.json({
-          ok: true,
-          status: "booking_unavailable",
-          refunded_to_wallet: true,
-          refund_amount: successResult.refund_amount,
-        });
-      }
-
-      return res.json({
-        ok: true,
-        status: "succeeded",
-        amount: Number(transaction.amount_aed),
-      });
+    if (r.booking_unavailable) {
+      return res.json({ ok: true, status: "booking_unavailable", refunded_to_wallet: true, refund_amount: r.refund_amount });
     }
-
-    return res.json({
-      ok: true,
-      status: result.status,
-      amount: result.amount,
-    });
+    return res.json({ ok: true, status: "succeeded", amount: Number(transaction.amount_aed) });
   } catch (error) {
     next(error);
   }
 });
 
-router.get("/verify/:chargeId", authRequired, async (req, res, next) => {
-  try {
-    const { chargeId } = req.params;
-
-    const transaction = await db("payment_transactions")
-      .where({ provider_payment_id: chargeId, user_id: req.user.sub })
-      .first();
-
-    if (!transaction) {
-      return res.status(404).json({ error: "Transaction not found" });
-    }
-
-    if (transaction.status === "succeeded") {
-      return res.json({
-        ok: true,
-        status: "succeeded",
-        amount: Number(transaction.amount_aed),
-      });
-    }
-
-    const result = await tapService.getChargeStatus(chargeId);
-
-    if (!result.ok) {
-      return res.status(400).json({ error: result.error });
-    }
-
-    return res.json({
-      ok: true,
-      status: result.status,
-      amount: result.amount,
-      card: result.card,
-    });
-  } catch (error) {
-    next(error);
+async function finishedResponse(transaction) {
+  if (transaction.status === "succeeded") {
+    return { ok: true, status: "succeeded", amount: Number(transaction.amount_aed) };
   }
-});
+  if (transaction.status === "refunded_to_wallet") {
+    const md = transaction.metadata || {};
+    if (md.refund_reason === "booking_unavailable") {
+      return { ok: true, status: "booking_unavailable", refunded_to_wallet: true, refund_amount: Number(md.refund_amount ?? transaction.amount_aed) };
+    }
+    return { ok: true, status: "succeeded", amount: Number(transaction.amount_aed) };
+  }
+  return null;
+}
 
+// ---------- Ziina: booking return pages ----------
 router.get("/ziina/booking/success", async (req, res) => {
   try {
-    const bookingId = req.query.booking_id || null;
-
-    console.log("Ziina booking success query:", req.query);
-    console.log("Ziina booking success bookingId:", bookingId);
-
-    if (!bookingId) {
-      return res.status(400).send("Missing booking_id");
-    }
+    const bookingId = String(req.query.booking_id || "");
+    if (!bookingId) return res.status(400).send(page("Something went wrong", ["Missing booking."]));
 
     const transaction = await db("payment_transactions")
-      .where({
-        provider: "ziina",
-        type: "booking_payment",
-        booking_id: bookingId,
-      })
+      .where({ provider: "ziina", type: "booking_payment", booking_id: bookingId })
       .orderBy("created_at", "desc")
       .first();
-
-    console.log("Ziina booking success transaction from booking_id:", transaction);
-
     if (!transaction?.provider_payment_id) {
-      return res.status(404).send("Booking payment transaction not found");
+      return res.status(404).send(page("Payment not found", ["Return to Glowee and check your booking."]));
     }
 
-    const paymentIntentId = transaction.provider_payment_id;
-
-    const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
-
-    console.log("Ziina booking success verify result:", result);
-
-    if (!result.ok) {
-      console.error("Ziina booking success verify failed:", result.error);
-      return res.status(400).send("Unable to verify payment");
+    const result = await ziinaService.getPaymentIntentStatus(transaction.provider_payment_id);
+    if (!result.ok) return res.status(400).send(page("We couldn't check your payment", ["Return to Glowee, your booking will update shortly."]));
+    if (!isZiinaPaid(result.status)) {
+      return res.status(400).send(page("Payment not completed", ["Return to Glowee and try again."]));
     }
 
-    const normalizedStatus = String(result.status || "").toLowerCase();
-
-    const successfulStatuses = ["completed"];
-
-    if (!successfulStatuses.includes(normalizedStatus)) {
-      console.warn("Ziina booking payment is not successful:", {
-        paymentIntentId,
-        status: result.status,
-        bookingId,
-      });
-
-      return res.status(400).send("Payment has not been completed");
+    const r = await ziinaService.handlePaymentIntentSuccess(transaction.provider_payment_id, result.raw);
+    if (!r.ok && !r.already_processed) {
+      return res.status(500).send(page("We couldn't confirm your booking", ["Your payment is safe. Return to Glowee or contact support."]));
     }
+    if (r.booking_unavailable) return res.send(bookingUnavailablePage(r.refund_amount));
 
-    const successResult = await ziinaService.handlePaymentIntentSuccess(
-      paymentIntentId,
-      result.raw
-    );
-
-    console.log("Ziina booking success handler result:", successResult);
-
-    if (!successResult.ok && !successResult.already_processed) {
-      console.error("Ziina booking success handler failed:", successResult.error);
-      return res.status(500).send("Failed to confirm booking");
-    }
-
-    if (successResult.booking_unavailable) {
-      return res.send(`<!doctype html><html><head><meta charset="utf-8"/>
-        <meta name="viewport" content="width=device-width,initial-scale=1"/>
-        <title>Time no longer available</title></head>
-        <body style="font-family:Arial,sans-serif;background:#f8f5f2;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px;text-align:center">
-        <div style="max-width:420px;background:#fff;border-radius:16px;padding:24px">
-        <h1 style="margin:0 0 12px;font-size:24px">This time is no longer available</h1>
-        <p style="margin:0;color:#555">Your payment of AED ${Number(successResult.refund_amount).toFixed(2)} was added to your Glowee wallet. You can use it to book another time.</p>
-        </div></body></html>`);
-    }
-
-    return res.redirect(
-      `/payments/ziina/booking/done?booking_id=${encodeURIComponent(
-        String(bookingId)
-      )}`
-    );
+    // The app watches for this address to close the payment screen.
+    return res.redirect(`/payments/ziina/booking/done?booking_id=${encodeURIComponent(bookingId)}`);
   } catch (error) {
-    console.error("Ziina booking success redirect error:", error);
-    return res.status(500).send("Server error");
+    console.error("Ziina booking success error:", error.message);
+    return res.status(500).send(page("Something went wrong", ["Return to Glowee and check your booking."]));
   }
+});
+
+router.get("/ziina/booking/done", (req, res) => {
+  res.send(page("Payment successful", ["Your booking is confirmed. You can return to Glowee."]));
 });
 
 router.get("/ziina/booking/cancel", async (req, res) => {
-  const trx = await db.transaction();
+  const bookingId = String(req.query.booking_id || "");
+  if (!bookingId) return res.status(400).send(page("Something went wrong", ["Missing booking."]));
 
   try {
-    const bookingId = req.query.booking_id || null;
-
-    console.log("Ziina booking cancel query:", req.query);
-
-    if (!bookingId) {
-      await trx.rollback();
-      return res.status(400).send("Missing booking_id");
-    }
-
-    await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [
-      `booking-payment:${bookingId}`,
-    ]);
-
-    const transaction = await trx("payment_transactions")
-      .where({
-        provider: "ziina",
-        type: "booking_payment",
-        booking_id: bookingId,
-        status: "pending",
-      })
+    const pending = await db("payment_transactions")
+      .where({ provider: "ziina", type: "booking_payment", booking_id: bookingId, status: "pending" })
       .orderBy("created_at", "desc")
-      .forUpdate()
       .first();
 
-    if (transaction) {
-      const metadata =
-        typeof transaction.metadata === "object" && transaction.metadata !== null
-          ? transaction.metadata
-          : {};
+    // Ask Ziina first: a "cancel" link opened after paying must not undo the payment.
+    if (pending?.provider_payment_id) {
+      const st = await ziinaService.getPaymentIntentStatus(pending.provider_payment_id);
+      if (st.ok && isZiinaPaid(st.status)) {
+        const r = await ziinaService.handlePaymentIntentSuccess(pending.provider_payment_id, st.raw);
+        if (r.booking_unavailable) return res.send(bookingUnavailablePage(r.refund_amount));
+        return res.redirect(`/payments/ziina/booking/done?booking_id=${encodeURIComponent(bookingId)}`);
+      }
+    }
 
-      const isSplitPayment = metadata.split_payment === true;
+    await db.transaction(async (trx) => {
+      await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`booking-payment:${bookingId}`]);
+
+      const transaction = await trx("payment_transactions")
+        .where({ provider: "ziina", type: "booking_payment", booking_id: bookingId, status: "pending" })
+        .orderBy("created_at", "desc")
+        .forUpdate()
+        .first();
+      if (!transaction) return;
+
+      const metadata = transaction.metadata || {};
       const walletAmount = Number(metadata.wallet_amount || 0);
-      const walletAlreadyRefunded = metadata.wallet_refunded === true;
 
-      if (isSplitPayment && walletAmount > 0 && !walletAlreadyRefunded) {
+      if (metadata.split_payment === true && walletAmount > 0 && metadata.wallet_refunded !== true) {
         const { addWalletBalance } = require("../controllers/walletController");
-
         await addWalletBalance(
           transaction.user_id,
           walletAmount,
-          `Refund - Split booking payment cancelled #${bookingId}`,
+          `Refund - booking payment cancelled #${bookingId}`,
           bookingId,
           "refund",
           trx
         );
 
         await trx("payment_transactions")
-          .where({
-            user_id: transaction.user_id,
-            booking_id: bookingId,
-            provider: "wallet",
-            type: "booking_payment",
-            status: "succeeded",
-          })
-          .whereRaw(
-            "COALESCE((metadata->>'wallet_portion')::boolean, false) = true"
-          )
+          .where({ user_id: transaction.user_id, booking_id: bookingId, provider: "wallet", type: "booking_payment", status: "succeeded" })
+          .whereRaw("COALESCE((metadata->>'wallet_portion')::boolean, false) = true")
           .update({
             status: "refunded",
             refunded_at: trx.fn.now(),
             updated_at: trx.fn.now(),
-            metadata: trx.raw(
-              `COALESCE(metadata, '{}'::jsonb) || ?::jsonb`,
-              [
-                JSON.stringify({
-                  wallet_refunded: true,
-                  wallet_refund_reason: "booking_payment_cancelled",
-                }),
-              ]
-            ),
+            metadata: trx.raw(`COALESCE(metadata, '{}'::jsonb) || ?::jsonb`, [
+              JSON.stringify({ wallet_refunded: true, wallet_refund_reason: "booking_payment_cancelled" }),
+            ]),
           });
 
         await trx("payment_transactions")
           .where({ id: transaction.id })
           .update({
             status: "cancelled",
-            metadata: {
-              ...metadata,
-              wallet_refunded: true,
-              wallet_refund_amount: walletAmount,
-              wallet_refund_reason: "booking_payment_cancelled",
-            },
+            metadata: { ...metadata, wallet_refunded: true, wallet_refund_amount: walletAmount, wallet_refund_reason: "booking_payment_cancelled" },
             updated_at: trx.fn.now(),
           });
       } else {
         await trx("payment_transactions")
           .where({ id: transaction.id })
-          .update({
-            status: "cancelled",
-            metadata: {
-              ...metadata,
-              cancelled: true,
-            },
-            updated_at: trx.fn.now(),
-          });
+          .update({ status: "cancelled", metadata: { ...metadata, cancelled: true }, updated_at: trx.fn.now() });
       }
-    }
+    });
 
-    await trx.commit();
-
-    return res.send(`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>Booking Payment Cancelled</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              background: #f8f5f2;
-              color: #111;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              margin: 0;
-              text-align: center;
-              padding: 24px;
-            }
-            .box {
-              max-width: 420px;
-              background: white;
-              border-radius: 16px;
-              padding: 24px;
-              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
-            }
-            h1 { margin: 0 0 12px; font-size: 28px; }
-            p { margin: 0; color: #555; }
-          </style>
-        </head>
-        <body>
-          <div class="box">
-            <h1>Payment cancelled</h1>
-            <p>Your booking payment was cancelled. You can return to Glowee and try again.</p>
-          </div>
-        </body>
-      </html>
-    `);
+    return res.send(page("Payment cancelled", ["Nothing was charged. You can return to Glowee and try again."]));
   } catch (error) {
-    await trx.rollback();
-    console.error("Ziina booking cancel redirect error:", error);
-    return res.status(500).send("Server error");
+    console.error("Ziina booking cancel error:", error.message);
+    return res.status(500).send(page("Something went wrong", ["Return to Glowee and try again."]));
   }
 });
 
-router.get("/ziina/booking/done", async (req, res) => {
-  const bookingId = req.query.booking_id || "";
-
-  return res.send(`
-    <!doctype html>
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <title>Payment Success</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            background: #f8f5f2;
-            color: #111;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            text-align: center;
-            padding: 24px;
-          }
-          .box {
-            max-width: 420px;
-            background: white;
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.08);
-          }
-          h1 { margin: 0 0 12px; font-size: 28px; }
-          p { margin: 0 0 10px; color: #555; }
-        </style>
-      </head>
-      <body>
-        <div class="box">
-          <h1>Payment successful</h1>
-          <p>Your booking has been confirmed.</p>
-          <p>Booking ID: ${bookingId || "-"}</p>
-        </div>
-      </body>
-    </html>
-  `);
-});
-
-router.get('/ziina/gift/success', async (req, res) => {
+// ---------- Ziina: gift return pages ----------
+router.get("/ziina/gift/success", async (req, res) => {
   try {
-    const giftId = req.query.gift_id || null;
-    const paymentIntentIdFromQuery =
-      req.query.payment_intent_id ||
-      req.query.id ||
-      req.query.payment_intent ||
-      null;
+    const giftId = req.query.gift_id ? String(req.query.gift_id) : null;
+    if (!giftId) return res.status(400).send(page("Something went wrong", ["Missing gift."]));
 
-    console.log('Ziina gift success query:', req.query);
+    const transaction = await db("payment_transactions")
+      .where({ provider: "ziina", type: "gift_purchase", gift_id: giftId })
+      .orderBy("created_at", "desc")
+      .first();
+    if (!transaction?.provider_payment_id) return res.status(404).send(page("Payment not found", ["Return to Glowee."]));
 
-    let transaction = null;
+    const result = await ziinaService.getPaymentIntentStatus(transaction.provider_payment_id);
+    if (!result.ok) return res.status(400).send(page("We couldn't check your payment", ["Return to Glowee, your gift will update shortly."]));
+    if (!isZiinaPaid(result.status)) return res.status(400).send(page("Payment not completed", ["Return to Glowee and try again."]));
 
-    if (paymentIntentIdFromQuery) {
-      transaction = await db('payment_transactions')
-        .where({
-          provider: 'ziina',
-          type: 'gift_purchase',
-          provider_payment_id: paymentIntentIdFromQuery,
-        })
-        .orderBy('created_at', 'desc')
-        .first();
+    const r = await ziinaService.handlePaymentIntentSuccess(transaction.provider_payment_id, result.raw);
+    if (!r.ok && !r.already_processed) {
+      return res.status(500).send(page("We couldn't send your gift", ["Your payment is safe. Contact Glowee support."]));
     }
 
-    if (!transaction && giftId) {
-      transaction = await db('payment_transactions')
-        .where({
-          provider: 'ziina',
-          type: 'gift_purchase',
-          gift_id: giftId,
-        })
-        .orderBy('created_at', 'desc')
-        .first();
-    }
-
-    if (!transaction?.provider_payment_id) {
-      return res.status(404).send('Gift payment transaction not found');
-    }
-
-    const paymentIntentId = transaction.provider_payment_id;
-
-    const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
-
-    if (!result.ok) {
-      console.error('Ziina gift success verify failed:', result.error);
-      return res.status(400).send('Unable to verify payment');
-    }
-
-    const normalizedStatus = String(result.status || '').toLowerCase();
-
-    const successStatuses = [
-      'completed',
-      'paid',
-      'succeeded',
-      'success',
-      'successful',
-      'captured',
-      'processed',
-      'requires_capture',
-    ];
-
-    if (successStatuses.includes(normalizedStatus)) {
-      const successResult = await ziinaService.handlePaymentIntentSuccess(
-        paymentIntentId,
-        result.raw
-      );
-
-      if (!successResult.ok && !successResult.already_processed) {
-        console.error('Ziina gift success handler failed:', successResult.error);
-        return res.status(500).send('Failed to activate gift');
-      }
-    } else {
-      return res.status(400).send(`Payment not completed yet: ${normalizedStatus}`);
-    }
-
-    return res.send(`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>Gift Payment Successful</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              background: #f8f5f2;
-              color: #111;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              margin: 0;
-              text-align: center;
-              padding: 24px;
-            }
-            .box {
-              max-width: 420px;
-              background: white;
-              border-radius: 16px;
-              padding: 24px;
-              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
-            }
-            h1 { margin: 0 0 12px; font-size: 28px; }
-            p { margin: 0; color: #555; }
-          </style>
-        </head>
-        <body>
-          <div class="box">
-            <h1>Payment successful</h1>
-            <p>Your gift has been activated. You can return to Glowee.</p>
-          </div>
-        </body>
-      </html>
-    `);
+    return res.send(page("Payment successful", ["Your gift is on its way. You can return to Glowee."]));
   } catch (error) {
-    console.error('Ziina gift success redirect error:', error);
-    return res.status(500).send('Server error');
+    console.error("Ziina gift success error:", error.message);
+    return res.status(500).send(page("Something went wrong", ["Return to Glowee."]));
   }
 });
 
 router.get("/ziina/gift/cancel", async (req, res) => {
+  const giftId = req.query.gift_id ? String(req.query.gift_id) : null;
   try {
-    console.log("Ziina gift cancel query:", req.query);
-    return res.send("Gift payment cancelled");
+    if (giftId) {
+      const pending = await db("payment_transactions")
+        .where({ provider: "ziina", type: "gift_purchase", gift_id: giftId, status: "pending" })
+        .orderBy("created_at", "desc")
+        .first();
+
+      // Ask Ziina first: if it was actually paid, send the gift instead.
+      if (pending?.provider_payment_id) {
+        const st = await ziinaService.getPaymentIntentStatus(pending.provider_payment_id);
+        if (st.ok && isZiinaPaid(st.status)) {
+          await ziinaService.handlePaymentIntentSuccess(pending.provider_payment_id, st.raw);
+          return res.send(page("Payment successful", ["Your gift is on its way. You can return to Glowee."]));
+        }
+      }
+
+      const { returnGiftWalletPart } = require("../controllers/giftPaymentController");
+      const r = await returnGiftWalletPart(giftId);
+      if (r.ok && r.refunded > 0) {
+        return res.send(
+          page("Payment cancelled", [`Nothing was charged to your card. AED ${r.refunded.toFixed(2)} went back to your Glowee wallet.`])
+        );
+      }
+    }
+    return res.send(page("Payment cancelled", ["Nothing was charged. You can return to Glowee and try again."]));
   } catch (error) {
-    console.error("Ziina gift cancel redirect error:", error);
-    return res.status(500).send("Server error");
+    console.error("Ziina gift cancel error:", error.message);
+    return res.status(500).send(page("Something went wrong", ["Return to Glowee."]));
   }
 });
 
+// ---------- Ziina: wallet return pages ----------
 router.get("/ziina/wallet/success", async (req, res) => {
   try {
-    const transactionId = req.query.transaction_id || null;
+    const transactionId = String(req.query.transaction_id || "");
+    if (!transactionId) return res.status(400).send(page("Something went wrong", ["Missing payment."]));
 
-    console.log("Ziina wallet success query:", req.query);
+    const transaction = await db("payment_transactions").where({ id: transactionId, provider: "ziina", type: "wallet_topup" }).first();
+    if (!transaction?.provider_payment_id) return res.status(404).send(page("Payment not found", ["Return to Glowee."]));
 
-    if (!transactionId) {
-      return res.status(400).send("Missing transaction_id");
+    const result = await ziinaService.getPaymentIntentStatus(transaction.provider_payment_id);
+    if (!result.ok) return res.status(400).send(page("We couldn't check your payment", ["Return to Glowee, your wallet will update shortly."]));
+    if (!isZiinaPaid(result.status)) return res.status(400).send(page("Payment not completed", ["Return to Glowee and try again."]));
+
+    const r = await ziinaService.handlePaymentIntentSuccess(transaction.provider_payment_id, result.raw);
+    if (!r.ok && !r.already_processed) {
+      return res.status(500).send(page("We couldn't add it to your wallet", ["Your payment is safe. Contact Glowee support."]));
     }
 
-    const transaction = await db("payment_transactions")
-      .where({
-        id: transactionId,
-        provider: "ziina",
-        type: "wallet_topup",
-      })
-      .first();
-
-    if (!transaction?.provider_payment_id) {
-      return res.status(404).send("Wallet topup transaction not found");
-    }
-
-    const paymentIntentId = transaction.provider_payment_id;
-
-    const result = await ziinaService.getPaymentIntentStatus(paymentIntentId);
-
-    if (!result.ok) {
-      console.error("Ziina wallet success verify failed:", result.error);
-      return res.status(400).send("Unable to verify payment");
-    }
-
-    const successStatuses = [
-      "completed",
-      "paid",
-      "succeeded",
-      "success",
-      "successful",
-      "captured",
-      "processed",
-      "requires_capture",
-    ];
-
-    if (successStatuses.includes(String(result.status).toLowerCase())) {
-      const successResult = await ziinaService.handlePaymentIntentSuccess(
-        paymentIntentId,
-        result.raw
-      );
-
-      if (!successResult.ok && !successResult.already_processed) {
-        console.error("Ziina wallet success handler failed:", successResult.error);
-        return res.status(500).send("Failed to credit wallet");
-      }
-    } else {
-      return res.status(400).send(`Payment not completed yet: ${result.status}`);
-    }
-
-    return res.send(`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>Wallet Top-up Successful</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              background: #f8f5f2;
-              color: #111;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              margin: 0;
-              text-align: center;
-              padding: 24px;
-            }
-            .box {
-              max-width: 420px;
-              background: white;
-              border-radius: 16px;
-              padding: 24px;
-              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
-            }
-            h1 { margin: 0 0 12px; font-size: 28px; }
-            p { margin: 0; color: #555; }
-          </style>
-        </head>
-        <body>
-          <div class="box">
-            <h1>Top-up successful</h1>
-            <p>Your wallet has been credited. You can return to Glowee.</p>
-          </div>
-        </body>
-      </html>
-    `);
+    return res.send(page("Top-up successful", ["Your wallet has been topped up. You can return to Glowee."]));
   } catch (error) {
-    console.error("Ziina wallet success redirect error:", error);
-    return res.status(500).send("Server error");
+    console.error("Ziina wallet success error:", error.message);
+    return res.status(500).send(page("Something went wrong", ["Return to Glowee."]));
   }
 });
 
-router.get("/ziina/wallet/cancel", async (req, res) => {
-  try {
-    console.log("Ziina wallet cancel query:", req.query);
-
-    return res.send(`
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width,initial-scale=1" />
-          <title>Wallet Top-up Cancelled</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              background: #f8f5f2;
-              color: #111;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-              margin: 0;
-              text-align: center;
-              padding: 24px;
-            }
-            .box {
-              max-width: 420px;
-              background: white;
-              border-radius: 16px;
-              padding: 24px;
-              box-shadow: 0 8px 30px rgba(0,0,0,0.08);
-            }
-            h1 { margin: 0 0 12px; font-size: 28px; }
-            p { margin: 0; color: #555; }
-          </style>
-        </head>
-        <body>
-          <div class="box">
-            <h1>Top-up cancelled</h1>
-            <p>Your wallet top-up was cancelled. You can return to Glowee and try again.</p>
-          </div>
-        </body>
-      </html>
-    `);
-  } catch (error) {
-    console.error("Ziina wallet cancel redirect error:", error);
-    return res.status(500).send("Server error");
-  }
+router.get("/ziina/wallet/cancel", (req, res) => {
+  res.send(page("Top-up cancelled", ["Nothing was charged. You can return to Glowee and try again."]));
 });
 
+// ---------- Ziina: subscription return pages ----------
 router.get("/ziina/subscription/success", async (req, res) => {
+  const dashboard = process.env.GLOWEE_DASHBOARD_URL;
   try {
-    const paymentId = req.query.payment_id || null;
+    const paymentId = String(req.query.payment_id || "");
+    if (!paymentId) return res.status(400).send(page("Something went wrong", ["Missing payment."]));
 
-    if (!paymentId) {
-      return res.status(400).send("Missing payment_id");
+    const payment = await db("subscription_payments").where({ id: paymentId, provider: "ziina" }).first();
+    if (!payment?.provider_payment_id) return res.status(404).send(page("Payment not found", ["Return to your Glowee dashboard."]));
+
+    if (payment.status !== "paid") {
+      const result = await ziinaService.getPaymentIntentStatus(payment.provider_payment_id);
+      if (!result.ok) return res.status(400).send(page("We couldn't check your payment", ["Return to your Glowee dashboard."]));
+      if (!isZiinaPaid(result.status)) return res.status(400).send(page("Payment not completed", ["Return to your Glowee dashboard and try again."]));
+
+      await db.transaction(async (trx) => {
+        // Lock, then re-check: opening this page twice must add one month, not two.
+        const locked = await trx("subscription_payments").where({ id: payment.id }).forUpdate().first();
+        if (locked.status === "paid") return;
+
+        await trx("subscription_payments")
+          .where({ id: payment.id })
+          .update({
+            status: "paid",
+            paid_at: trx.fn.now(),
+            metadata: { ...(locked.metadata || {}), ziina_status: result.status, ziina_raw: result.raw || null },
+            updated_at: trx.fn.now(),
+          });
+
+        // Paying early adds the month after the current end, so no days are lost.
+        await trx("subscriptions")
+          .where({ id: payment.subscription_id })
+          .update({
+            provider: "ziina",
+            status: "active",
+            auto_renew: true,
+            cancel_at_period_end: false,
+            current_period_start: trx.raw("CASE WHEN current_period_end > NOW() THEN current_period_start ELSE NOW() END"),
+            current_period_end: trx.raw("GREATEST(COALESCE(current_period_end, NOW()), NOW()) + INTERVAL '1 month'"),
+            cancelled_at: null,
+            ended_at: null,
+            updated_at: trx.fn.now(),
+          });
+      });
     }
 
-    const payment = await db("subscription_payments")
-      .where({ id: paymentId, provider: "ziina" })
-      .first();
-
-    if (!payment?.provider_payment_id) {
-      return res.status(404).send("Subscription payment not found");
-    }
-
-    const result = await ziinaService.getPaymentIntentStatus(
-      payment.provider_payment_id
-    );
-
-    if (!result.ok) {
-      return res.status(400).send("Unable to verify payment");
-    }
-
-    const successStatuses = [
-      "completed",
-      "paid",
-      "succeeded",
-      "success",
-      "successful",
-      "captured",
-      "processed",
-      "requires_capture",
-    ];
-
-    if (!successStatuses.includes(String(result.status).toLowerCase())) {
-      return res.status(400).send(`Payment not completed yet: ${result.status}`);
-    }
-
-    await db.transaction(async (trx) => {
-      await trx("subscription_payments")
-        .where({ id: payment.id })
-        .update({
-          status: "paid",
-          paid_at: trx.fn.now(),
-          metadata: {
-            ...(payment.metadata || {}),
-            ziina_status: result.status,
-            ziina_raw: result.raw || null,
-          },
-          updated_at: trx.fn.now(),
-        });
-
-      await trx("subscriptions")
-        .where({ id: payment.subscription_id })
-        .update({
-          provider: "ziina",
-          status: "active",
-          auto_renew: true,
-          cancel_at_period_end: false,
-          current_period_start: trx.fn.now(),
-          current_period_end: trx.raw("NOW() + INTERVAL '1 month'"),
-          cancelled_at: null,
-          ended_at: null,
-          updated_at: trx.fn.now(),
-        });
-    });
-
-    return res.redirect(
-      `${process.env.GLOWEE_DASHBOARD_URL}/salon/subscription?payment=success`
-    );
+    return res.redirect(`${dashboard}/salon/subscription?payment=success`);
   } catch (error) {
-    console.error("Ziina subscription success error:", error);
-    return res.status(500).send("Server error");
+    console.error("Ziina subscription success error:", error.message);
+    return res.status(500).send(page("Something went wrong", ["Return to your Glowee dashboard."]));
   }
 });
 
 router.get("/ziina/subscription/cancel", async (req, res) => {
   try {
-    const paymentId = req.query.payment_id || null;
-
+    const paymentId = req.query.payment_id ? String(req.query.payment_id) : null;
     if (paymentId) {
       await db("subscription_payments")
         .where({ id: paymentId, provider: "ziina", status: "pending" })
-        .update({
-          status: "cancelled",
-          updated_at: db.fn.now(),
-        });
+        .update({ status: "cancelled", updated_at: db.fn.now() });
     }
-
-    return res.redirect(
-      `${process.env.GLOWEE_DASHBOARD_URL}/salon/subscription?payment=cancelled`
-    );
+    return res.redirect(`${process.env.GLOWEE_DASHBOARD_URL}/salon/subscription?payment=cancelled`);
   } catch (error) {
-    console.error("Ziina subscription cancel error:", error);
-    return res.status(500).send("Server error");
-  }
-});
-
-router.post("/tap/apple-pay/charge", authRequired, async (req, res, next) => {
-  try {
-    const { z } = require("zod");
-
-    const BodySchema = z.object({
-      purpose: z.enum(["wallet_topup", "gift_purchase", "booking_payment"]),
-      amount_aed: z.number().min(1).max(10000),
-      token_id: z.string().min(3),
-      booking_id: z.string().uuid().nullable().optional(),
-      gift_id: z.string().uuid().nullable().optional(),
-    });
-
-    const body = BodySchema.parse(req.body);
-    const userId = req.user.sub;
-
-    const user = await db("users").where({ id: userId }).first();
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const tapResult = await tapService.createApplePayCharge({
-      userId,
-      amountAed: body.amount_aed,
-      tokenId: body.token_id,
-      purpose: body.purpose,
-      bookingId: body.booking_id || null,
-      giftId: body.gift_id || null,
-      customer: {
-        phone: user.phone,
-        name: user.name,
-        email: user.email,
-      },
-    });
-
-    if (!tapResult.ok) {
-      return res.status(400).json({
-        error: tapResult.error,
-        code: tapResult.code,
-      });
-    }
-
-    return res.json({
-      ok: true,
-      provider: "tap",
-      charge_id: tapResult.charge_id,
-      transaction_id: tapResult.transaction_id,
-      status: tapResult.status,
-      amount: tapResult.amount,
-    });
-  } catch (error) {
-    next(error);
+    console.error("Ziina subscription cancel error:", error.message);
+    return res.status(500).send(page("Something went wrong", ["Return to your Glowee dashboard."]));
   }
 });
 
@@ -1032,9 +443,7 @@ const giftPayment = require("../controllers/giftPaymentController");
 
 router.get("/bookings/:id/payment-options", authRequired, bookingPayment.getPaymentOptions);
 router.post("/bookings/:id/pay", authRequired, bookingPayment.payForBooking);
-
 router.get("/gifts/payment-options", authRequired, giftPayment.getGiftPaymentOptions);
 router.post("/gifts/send-with-payment", authRequired, giftPayment.sendGiftWithPayment);
-
 
 module.exports = router;

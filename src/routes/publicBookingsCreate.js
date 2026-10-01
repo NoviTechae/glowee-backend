@@ -3,8 +3,8 @@ const router = require("express").Router();
 const { z } = require("zod");
 const db = require("../db/knex");
 const authRequired = require("../middleware/authRequired");
-const { whereBookingHoldsSlot } = require("../utils/bookingHold");
 const { coverageForPoint, rulesForDay } = require("../utils/homeCoverage");
+const { inDubai, busyForDay } = require("../utils/slots");
 
 // Body schema
 const BodySchema = z
@@ -186,7 +186,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
       }
     }
 
-    const dow = start.getDay();
+    const dow = inDubai(start).dow;
     const hourRow = await trx("branch_hours")
       .where({ branch_id: branchId, day_of_week: dow })
       .first();
@@ -278,17 +278,17 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     await trx.raw("SELECT pg_advisory_xact_lock(hashtext(?))", [`branch-booking:${branchId}`]);
 
     async function staffIsFree(staffId) {
-      const overlap = await trx("booking_item_assignments as bia")
-        .join("booking_items as bi", "bi.id", "bia.booking_item_id")
-        .join("bookings as b", "b.id", "bi.booking_id")
-        .where("bia.staff_id", staffId)
-        .andWhere("bia.branch_id", branchId)
-        .modify((qb) => whereBookingHoldsSlot(qb, trx))
-        .andWhere("bia.starts_at", "<", end.toISOString())
-        .andWhere("bia.ends_at", ">", start.toISOString())
-        .first("bia.id");
+      const s = start.getTime();
+      const e = end.getTime();
+      const hit = (spans) => spans.some(([bs, be]) => s < be && e > bs);
 
-      return !overlap;
+      // An appointment can run past midnight, so check both UAE days it touches.
+      const days = [...new Set([inDubai(start).dateKey, inDubai(new Date(e - 1)).dateKey])];
+      for (const dateKey of days) {
+        const busy = await busyForDay(trx, { branchId, staffIds: [staffId], dateKey });
+        if (hit(busy.wholeBranch) || hit(busy.byStaff.get(staffId) || [])) return false;
+      }
+      return true;
     }
 
     let chosenStaffId = body.staff_id ?? null;
@@ -357,6 +357,18 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     const total = subtotal + fees;
     const userId = req.user.sub;
 
+    const addressLine =
+      body.mode === "home"
+        ? [
+          body.house_number ? `House ${String(body.house_number).trim()}` : null,
+          body.street_name ? String(body.street_name).trim() : null,
+          body.address_line1 ? String(body.address_line1).trim() : null,
+          body.address_line2 ? String(body.address_line2).trim() : null,
+        ]
+          .filter(Boolean)
+          .join(", ")
+        : null;
+
     const [booking] = await trx("bookings")
       .insert({
         user_id: userId,
@@ -368,7 +380,13 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
         subtotal_aed: subtotal,
         fees_aed: fees,
         total_aed: total,
-        customer_note: body.location_note ?? null,
+        customer_note: body.customer_note?.trim() || body.location_note?.trim() || null,
+        contact_name: body.mode === "home" ? body.contact_name.trim() : null,
+        contact_phone: body.mode === "home" ? body.contact_phone.trim() : null,
+        service_area: body.mode === "home" ? String(body.area).trim() : null,
+        service_address: addressLine,
+        service_lat: body.mode === "home" ? body.latitude : null,
+        service_lng: body.mode === "home" ? body.longitude : null,
         created_at: trx.fn.now(),
         updated_at: trx.fn.now(),
       })
@@ -378,15 +396,6 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
     if (body.mode === "home") {
       const latNum = Number(body.latitude);
       const lngNum = Number(body.longitude);
-
-      const addressLine = [
-        body.house_number ? `House ${String(body.house_number).trim()}` : null,
-        body.street_name ? String(body.street_name).trim() : null,
-        body.address_line1 ? String(body.address_line1).trim() : null,
-        body.address_line2 ? String(body.address_line2).trim() : null,
-      ]
-        .filter(Boolean)
-        .join(", ");
 
       const existingAddress = await trx("user_addresses")
         .where({ user_id: userId })
@@ -431,7 +440,9 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
           booking_id: booking.id,
           service_id: r.service_id,
           service_availability_id: r.availability_id,
+          service_name: r.service_name,
           service_name_snapshot: r.service_name,
+          unit_price_aed: unit,
           price_aed_snapshot: unit,
           duration_min_snapshot: duration,
           duration_mins: duration,
@@ -470,7 +481,7 @@ router.post("/salons/:salonId/branches/:branchId/bookings", authRequired, async 
   } catch (e) {
     try {
       await trx.rollback();
-    } catch {}
+    } catch { }
     next(e);
   }
 });

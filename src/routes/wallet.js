@@ -1,16 +1,8 @@
 // src/routes/wallet.js
 const express = require("express");
 const router = express.Router();
-
-const {
-  getWalletSummary,
-  getWalletHistory,
-} = require("../controllers/walletController");
-
-//const { topupWallet } = require("../controllers/walletTopupController");
-
-// ⬇️ غيّري هذا حسب مشروعك
 const authRequired = require("../middleware/authRequired");
+const { getWalletSummary, getWalletHistory, getSalonStampRewards } = require("../controllers/walletController");
 
 // GET /wallet/summary
 router.get("/summary", authRequired, getWalletSummary);
@@ -18,7 +10,7 @@ router.get("/summary", authRequired, getWalletSummary);
 // GET /wallet/history?page=1&limit=20
 router.get("/history", authRequired, getWalletHistory);
 
-//router.post("/topup", authRequired, topupWallet); // ✅ NEW
-
+// GET /wallet/stamp-rewards?salon_id=...  (loyalty rewards the customer can use at this salon)
+router.get("/stamp-rewards", authRequired, getSalonStampRewards);
 
 module.exports = router;

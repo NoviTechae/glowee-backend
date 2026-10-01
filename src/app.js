@@ -170,7 +170,6 @@ app.use("/dashboard/salon/gifts", salonGiftsRoutes);
 
 // Wallet & rewards
 app.use("/wallet", require("./routes/wallet"));
-// app.use("/wallet", require("./routes/walletTopup"));
 app.use("/rewards", require("./routes/rewards"));
 app.use("/dashboard/salon/stamps", require("./routes/salonStamps"));
 
@@ -233,9 +232,8 @@ app.use((err, req, res, next) => {
   const statusCode = err.status || err.statusCode || 500;
 
   res.status(statusCode).json({
-    error: isProd
-      ? (statusCode === 500 ? 'Internal server error' : err.message)
-      : err.message,
+    // Never send database or server details to the app or dashboard.
+    error: statusCode >= 500 ? 'Internal server error' : err.message,
     // Only include these in development
     ...(isProd ? {} : {
       code: err.code,
