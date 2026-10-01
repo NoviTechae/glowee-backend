@@ -81,7 +81,7 @@ router.get("/branches", async (req, res, next) => {
             WHEN bh.branch_id IS NULL THEN NULL
             WHEN bh.is_closed = true THEN false
             WHEN bh.open_time IS NULL OR bh.close_time IS NULL THEN false
-            WHEN (${dubaiNow}::time >= bh.open_time AND ${dubaiNow}::time < bh.close_time) THEN true
+            WHEN (${dubaiNow}::time >= bh.open_time::time AND ${dubaiNow}::time < bh.close_time::time) THEN true
             ELSE false
           END as is_open_now
         `),
@@ -179,8 +179,8 @@ function summariseZones(zones, branchMin) {
     home_min_order_aed: mins.every((m) => m != null)
       ? Math.min(...mins.map(Number))
       : branchMin == null
-      ? null
-      : Number(branchMin),
+        ? null
+        : Number(branchMin),
     area_visit_fee_aed: fees.every((f) => f != null) ? Math.min(...fees.map(Number)) : null,
   };
 }
