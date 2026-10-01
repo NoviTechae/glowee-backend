@@ -4,13 +4,15 @@ const { listUsableRewardsForUser, listUsableRewards } = require("../services/sta
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 
-// Make sure the user has a wallet row. Safe if two requests do it at once.
+// Make sure the user has a wallet row.
+// (wallets.user_id has no unique constraint, so ON CONFLICT can't be used here.)
 async function ensureWalletRow(userId, trx = knex) {
-  await trx("wallets")
+  const existing = await trx("wallets").where({ user_id: userId }).first();
+  if (existing) return existing;
+  const [created] = await trx("wallets")
     .insert({ user_id: userId, balance_aed: 0, updated_at: trx.fn.now() })
-    .onConflict("user_id")
-    .ignore();
-  return trx("wallets").where({ user_id: userId }).first();
+    .returning("*");
+  return created;
 }
 
 function writeTx(trx, { userId, type, amt, balanceAfter, note, refId }) {
